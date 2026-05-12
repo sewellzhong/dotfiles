@@ -10,19 +10,99 @@ NC='\033[0m' # No Color
 
 # Set stow-managed directory
 DOTFILES_DIR="$HOME/.dotfiles"
+APT_UPDATED=false
+DRY_RUN=false
+ASSUME_YES=false
+BACKUP_TARGETS=()
+STOW_MODULES=(
+    bin
+    dircolors
+    bash
+    zsh
+    common
+    ssh
+    git
+    tmux
+    bat
+    glow
+    htop
+    nvim
+    wget
+    yt-dlp
+    ripgrep
+    alacritty
+)
 
 # oh-my-zsh directories
 ZSH="$HOME/.oh-my-zsh"
 ZSH_CUSTOM="$ZSH/custom"
 
+usage() {
+    cat <<EOF
+Usage: ${0##*/} [options]
+
+Options:
+    -h, --help     Print this message
+    -n, --dry-run  Print actions without running them
+    -y, --yes      Skip confirmation prompts
+EOF
+}
+
+parse_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            -n|--dry-run)
+                DRY_RUN=true
+                ;;
+            -y|--yes)
+                ASSUME_YES=true
+                ;;
+            *)
+                echo -e "${RED}Unknown option: $1${NC}"
+                usage
+                exit 1
+                ;;
+        esac
+        shift
+    done
+}
+
+run() {
+    if [ "$DRY_RUN" = true ]; then
+        printf '+'
+        printf ' %q' "$@"
+        printf '\n'
+    else
+        "$@"
+    fi
+}
+
+run_quiet() {
+    if [ "$DRY_RUN" = true ]; then
+        printf '+'
+        printf ' %q' "$@"
+        printf ' > /dev/null\n'
+    else
+        "$@" > /dev/null
+    fi
+}
+
 # Check if a software package is installed
 is_installed_of_apt() {
-    # Check apt-installed packages
-    if dpkg -l | grep -q "$1"; then
-        return 0  # Installed via apt
-    fi
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
+}
 
-    return 1  # Neither installed via apt nor git
+# Update apt package index once per run
+update_apt_once() {
+    if [ "$APT_UPDATED" = false ]; then
+        echo -e "${YELLOW}Updating apt package index...${NC}"
+        run_quiet sudo apt-get update
+        APT_UPDATED=true
+    fi
 }
 
 # Check if a software package is installed
@@ -40,8 +120,8 @@ is_installed_of_path() {
 install_apt_package() {
     if ! is_installed_of_apt "$1"; then
         echo -e "${YELLOW}Installing missing package: $1${NC}"
-        sudo apt-get update > /dev/null
-        sudo apt-get install -y "$1" > /dev/null
+        update_apt_once
+        run_quiet sudo apt-get install -y "$1"
     else
         echo -e "${GREEN}$1 is already installed${NC}"
     fi
@@ -54,7 +134,7 @@ install_git_repo() {
 
     if ! is_installed_of_path "$dir"; then
         echo -e "${YELLOW}Cloning Git repo: $repo${NC}"
-        git clone "$repo" "$dir" > /dev/null
+        run_quiet git clone "$repo" "$dir"
     else
         echo -e "${GREEN}$dir already exists, skipping clone${NC}"
     fi
@@ -68,14 +148,14 @@ install_oh_my_zsh_core() {
     if [ ! -d "$ZSH" ]; then
         echo -e "${YELLOW}Cloning Oh-My-Zsh: $version ...${NC}"
         if [ "$version" = "master" ]; then
-            git clone --depth 1 --branch "$version" "$repo" "$ZSH" > /dev/null
+            run_quiet git clone --depth 1 --branch "$version" "$repo" "$ZSH"
         else
-            git clone "$repo" "$ZSH" > /dev/null
-            git -C "$ZSH" checkout "$version" > /dev/null
+            run_quiet git clone "$repo" "$ZSH"
+            run_quiet git -C "$ZSH" checkout "$version"
         fi
 
         echo -e "${YELLOW}Installing Oh-My-Zsh ...${NC}"
-        RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh "$ZSH/tools/install.sh" --unattended > /dev/null
+        run_quiet env RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh "$ZSH/tools/install.sh" --unattended
     else
         echo -e "${GREEN}Oh-My-Zsh is already installed${NC}"
     fi
@@ -100,19 +180,78 @@ install_oh_my_zsh() {
 
 # Backup existing config files
 backup_config() {
-    local target="$1"
+    local source="$1"
+    local target="$2"
 
-    if [ -f "$target" ] || [ -L "$target" ]; then
+    if [ -L "$target" ] && [ "$(readlink -f "$target")" = "$(readlink -f "$source")" ]; then
+        return
+    elif [ -f "$target" ] || [ -L "$target" ]; then
         local backup_target="${target/#$HOME/$HOME/.dotfiles_backup}"
         local backup_dir="$(dirname "$backup_target")"
 
         if [ ! -d "$backup_dir" ]; then
-            mkdir -p "$backup_dir" > /dev/null
+            run_quiet mkdir -p "$backup_dir"
         fi
 
         echo -e "${YELLOW}Backing up $target to $backup_target${NC}"
-        mv "$target" "$backup_target" > /dev/null
+        run_quiet mv "$target" "$backup_target"
     fi
+}
+
+collect_backup_targets() {
+    local package="$1"
+    local package_dir="$DOTFILES_DIR/$package"
+    local file
+    local target
+
+    if [ ! -d "$package_dir" ]; then
+        return
+    fi
+
+    while IFS= read -r file; do
+        target="${file/#$package_dir/$HOME}"
+        if [ -L "$target" ] && [ "$(readlink -f "$target")" = "$(readlink -f "$file")" ]; then
+            continue
+        elif [ -f "$target" ] || [ -L "$target" ]; then
+            BACKUP_TARGETS+=("$target")
+        fi
+    done < <(find "$package_dir" -type f)
+}
+
+collect_all_backup_targets() {
+    local package
+
+    BACKUP_TARGETS=()
+    for package in "${STOW_MODULES[@]}"; do
+        collect_backup_targets "$package"
+    done
+}
+
+confirm_backup_targets() {
+    local target
+    local response
+
+    [ "${#BACKUP_TARGETS[@]}" -eq 0 ] && return 0
+
+    echo -e "${YELLOW}The following files will be moved to ~/.dotfiles_backup:${NC}"
+    for target in "${BACKUP_TARGETS[@]}"; do
+        echo "  $target"
+    done
+
+    if [ "$DRY_RUN" = true ] || [ "$ASSUME_YES" = true ]; then
+        return 0
+    fi
+
+    read -r -p "Continue? [y/N] " response
+    case "$response" in
+        [yY]|[yY][eE][sS])
+            return 0
+            ;;
+        *)
+            echo "Cancelled."
+            exit 1
+            ;;
+    esac
 }
 
 # Link files using stow
@@ -126,10 +265,10 @@ stow_link() {
     if [ -d "$package_dir" ]; then
         find "$package_dir" -type f | while IFS= read -r file; do
             local target="${file/#$package_dir/$HOME}"
-            backup_config "$target"
+            backup_config "$file" "$target"
         done
 
-        stow --no-folding -d "$DOTFILES_DIR" -R -t "$HOME" "$package" > /dev/null
+        run_quiet stow --no-folding -d "$DOTFILES_DIR" -R -t "$HOME" "$package"
     else
         echo -e "${RED}Stow package $package does not exist, skipping${NC}"
     fi
@@ -149,9 +288,9 @@ install_dependencies_or_plugins() {
     # diff-so-fancy download + symlink
     install_git_repo "https://github.com/so-fancy/diff-so-fancy.git" "$HOME/.local/share/diff-so-fancy"
     if [ ! -d "$HOME/.local/bin" ]; then
-        mkdir -p "$HOME/.local/bin" > /dev/null
+        run_quiet mkdir -p "$HOME/.local/bin"
     fi
-    ln -sf "$HOME/.local/share/diff-so-fancy/diff-so-fancy" "$HOME/.local/bin/diff-so-fancy"
+    run_quiet ln -sf "$HOME/.local/share/diff-so-fancy/diff-so-fancy" "$HOME/.local/bin/diff-so-fancy"
 
     # stow
     install_apt_package "stow"
@@ -207,61 +346,21 @@ install_dependencies_or_plugins() {
 link_module(){
     echo -e "${BLUE}Linking modules...${NC}"
 
-    # bin
-    stow_link "bin"
+    local package
 
-    # dircolors
-    stow_link "dircolors"
-
-    # bash
-    stow_link "bash"
-
-    # zsh
-    stow_link "zsh"
-
-    # common
-    stow_link "common"
-
-    # ssh
-    stow_link "ssh"
-
-    # git
-    stow_link "git"
-
-    # tmux
-    stow_link "tmux"
-
-    # bat
-    stow_link "bat"
-
-    # glow
-    stow_link "glow"
-
-    # htop
-    stow_link "htop"
-
-    # nvim
-    stow_link "nvim"
-
-    # vim
-#    stow_link "vim"
-
-    # wget
-    stow_link "wget"
-
-    # yt-dlp
-    stow_link "yt-dlp"
-
-    # ripgrep
-    stow_link "ripgrep"
-
-    # alacritty
-    stow_link "alacritty"
+    for package in "${STOW_MODULES[@]}"; do
+        stow_link "$package"
+    done
 }
 
 # Main entry point
 main() {
+    parse_args "$@"
+
     echo -e "${GREEN}dotfiles installation started...${NC}"
+
+    collect_all_backup_targets
+    confirm_backup_targets
 
     # Install dependencies or plugins (customize as needed)
     install_dependencies_or_plugins
