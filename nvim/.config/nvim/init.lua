@@ -176,12 +176,21 @@ end
 -- ========================
 local null_ls_ok, null_ls = pcall(require, "null-ls")
 if null_ls_ok then
+     local none_ls_sources = {}
+     local function add_none_ls_source(command, source)
+          if vim.fn.executable(command) == 1 then
+               table.insert(none_ls_sources, source)
+          else
+               vim.notify(command .. " not found; skipping related none-ls source.", vim.log.levels.WARN)
+          end
+     end
+
+     add_none_ls_source("prettier", null_ls.builtins.formatting.prettier)
+     add_none_ls_source("eslint", null_ls.builtins.diagnostics.eslint)
+     add_none_ls_source("php", null_ls.builtins.diagnostics.php)
+
      null_ls.setup({
-          sources = {
-               null_ls.builtins.formatting.prettier,
-               null_ls.builtins.diagnostics.eslint,
-               null_ls.builtins.diagnostics.php,
-          },
+          sources = none_ls_sources,
           on_attach = function(_, bufnr)
           local opts = { noremap=true, silent=true, buffer=bufnr }
           vim.keymap.set("n", "[d", vim.diagnostic.goto_prev, opts)

@@ -18,6 +18,8 @@ MODE="full"
 BACKUP_ROOT=""
 BACKUP_TARGETS=()
 STOW_CONFLICTS=()
+LOCK_FILE="${DOTFILES_LOCK_FILE:-$DOTFILES_DIR/dotfiles.lock}"
+DOTFILES_USE_LOCK="${DOTFILES_USE_LOCK:-false}"
 STOW_MODULES=(
     bin
     dircolors
@@ -35,6 +37,42 @@ STOW_MODULES=(
     yt-dlp
     ripgrep
     alacritty
+)
+APT_PACKAGES=(
+    fonts-jetbrains-mono
+    fonts-noto-cjk
+    fonts-noto-color-emoji
+    git
+    shellcheck
+    stow
+    zsh
+    autojump
+    net-tools
+    traceroute
+    neovim
+    glow
+    bat
+    openssh-server
+    openssh-client
+    wget
+    curl
+    tmux
+    fzf
+    ripgrep
+    nnn
+    lrzsz
+    htop
+    xclip
+    yt-dlp
+    alacritty
+)
+SCRIPT_CHECKS=(
+    dotfiles.sh
+    bin/.local/bin/update
+    bin/.local/bin/update-beauty
+    bin/.local/bin/cleaner
+    bin/.local/bin/rofi-calendar
+    bin/.local/bin/sizeof
 )
 
 # oh-my-zsh directories
@@ -71,12 +109,14 @@ Modes:
     install          Install dependencies and plugins only
     backup           Back up conflicting target files only
     link             Back up conflicts, then link modules only
+    verify           Run local syntax and dry-run checks only
+    lock             Write current Git dependency commits to dotfiles.lock
 EOF
 }
 
 set_mode() {
     case "$1" in
-        full|install|backup|link)
+        full|install|backup|link|verify|lock)
             MODE="$1"
             ;;
         *)
@@ -112,7 +152,7 @@ parse_args() {
             --mode=*)
                 set_mode "${1#*=}"
                 ;;
-            full|install|backup|link)
+            full|install|backup|link|verify|lock)
                 set_mode "$1"
                 ;;
             *)
@@ -146,7 +186,7 @@ run_quiet() {
 }
 
 warn() {
-    echo -e "${YELLOW}$*${NC}"
+    echo -e "${YELLOW}$*${NC}" >&2
 }
 
 die() {
@@ -181,10 +221,10 @@ require_command() {
 normalize_git_url() {
     local url="$1"
     url="${url%.git}"
-    if [[ "$url" == *github.com* ]]; then
-        url="$(sed 's#.*github.com[:/]#github.com/#' <<<"$url")"
-    elif [[ "$url" == *gitlab.com* ]]; then
-        url="$(sed 's#.*gitlab.com[:/]#gitlab.com/#' <<<"$url")"
+    if [[ "$url" =~ github\.com[:/](.*)$ ]]; then
+        url="github.com/${BASH_REMATCH[1]}"
+    elif [[ "$url" =~ gitlab\.com[:/](.*)$ ]]; then
+        url="gitlab.com/${BASH_REMATCH[1]}"
     else
         url="${url#https://}"
         url="${url#http://}"
@@ -221,6 +261,9 @@ preflight() {
         full|install)
             preflight_install
             ;;
+        verify|lock)
+            require_command git
+            ;;
     esac
     case "$MODE" in
         full|link)
@@ -252,11 +295,11 @@ backup_path_for() {
     local backup_target
     local counter=0
 
-    backup_target="$BACKUP_ROOT${target#$HOME}"
+    backup_target="$BACKUP_ROOT${target#"$HOME"}"
 
     while [ -e "$backup_target" ] || [ -L "$backup_target" ]; do
         counter=$((counter + 1))
-        backup_target="$BACKUP_ROOT${target#$HOME}.$counter"
+        backup_target="$BACKUP_ROOT${target#"$HOME"}.$counter"
     done
 
     printf '%s\n' "$backup_target"
@@ -286,6 +329,26 @@ install_apt_package() {
     else
         echo -e "${GREEN}$1 is already installed${NC}"
     fi
+}
+
+git_dependency_ref() {
+    local repo="$1"
+    local env_name="$2"
+    local explicit_ref="${!env_name:-}"
+    local locked_ref=""
+
+    if [ -n "$explicit_ref" ]; then
+        printf '%s\n' "$explicit_ref"
+        return 0
+    fi
+
+    if [ "$DOTFILES_USE_LOCK" = true ] && [ -r "$LOCK_FILE" ]; then
+        locked_ref="$(awk -F '\t' -v repo="$(normalize_git_url "$repo")" '
+            $1 == repo { print $2; exit }
+        ' "$LOCK_FILE")"
+    fi
+
+    printf '%s\n' "$locked_ref"
 }
 
 # Clone, update, or repair a Git-managed dependency.
@@ -342,41 +405,45 @@ install_git_repo() {
     fi
 }
 
+install_git_dependency() {
+    local repo="$1"
+    local dir="$2"
+    local env_name="$3"
+    local ref
+
+    ref="$(git_dependency_ref "$repo" "$env_name")"
+    install_git_repo "$repo" "$dir" "$ref"
+}
+
 # Install oh-my-zsh core
 install_oh_my_zsh_core() {
     local repo="https://github.com/ohmyzsh/ohmyzsh.git"
 
     if [ ! -d "$ZSH" ]; then
         echo -e "${YELLOW}Cloning Oh-My-Zsh...${NC}"
-        install_git_repo "$repo" "$ZSH" "$OH_MY_ZSH_VERSION"
+        install_git_dependency "$repo" "$ZSH" OH_MY_ZSH_VERSION
 
         echo -e "${YELLOW}Installing Oh-My-Zsh ...${NC}"
         run_quiet env RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh "$ZSH/tools/install.sh" --unattended
     else
-        install_git_repo "$repo" "$ZSH" "$OH_MY_ZSH_VERSION"
+        install_git_dependency "$repo" "$ZSH" OH_MY_ZSH_VERSION
     fi
 }
 
 # Install oh-my-zsh
 install_oh_my_zsh() {
-    # zsh
-    install_apt_package "zsh"
-
     install_oh_my_zsh_core
-
-    # autojump
-    install_apt_package "autojump"
     # zsh-autosuggestions
-    install_git_repo "https://github.com/zsh-users/zsh-autosuggestions.git" "$ZSH_CUSTOM/plugins/zsh-autosuggestions" "$ZSH_AUTOSUGGESTIONS_VERSION"
+    install_git_dependency "https://github.com/zsh-users/zsh-autosuggestions.git" "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ZSH_AUTOSUGGESTIONS_VERSION
     # zsh-syntax-highlighting
-    install_git_repo "https://github.com/zsh-users/zsh-syntax-highlighting.git" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" "$ZSH_SYNTAX_HIGHLIGHTING_VERSION"
+    install_git_dependency "https://github.com/zsh-users/zsh-syntax-highlighting.git" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ZSH_SYNTAX_HIGHLIGHTING_VERSION
     # extract
-    install_git_repo "https://github.com/xvoland/Extract.git" "$ZSH_CUSTOM/plugins/extract" "$ZSH_EXTRACT_VERSION"
+    install_git_dependency "https://github.com/xvoland/Extract.git" "$ZSH_CUSTOM/plugins/extract" ZSH_EXTRACT_VERSION
 }
 
 install_neovim_plugins() {
     echo -e "${BLUE}Installing Neovim plugin manager...${NC}"
-    install_git_repo "https://github.com/folke/lazy.nvim.git" "$NVIM_LAZY_DIR" "$LAZY_NVIM_VERSION"
+    install_git_dependency "https://github.com/folke/lazy.nvim.git" "$NVIM_LAZY_DIR" LAZY_NVIM_VERSION
 
     echo -e "${BLUE}Syncing Neovim plugins...${NC}"
     run env DOTFILES_NVIM_SYNC=1 nvim --headless --clean -u "$DOTFILES_DIR/nvim/.config/nvim/init.lua" "+Lazy! sync" +qa
@@ -384,9 +451,50 @@ install_neovim_plugins() {
 
 install_tmux_plugins() {
     echo -e "${BLUE}Installing tmux plugins...${NC}"
-    install_git_repo "https://github.com/tmux-plugins/tpm.git" "$TMUX_PLUGIN_DIR/tpm" "$TPM_VERSION"
-    install_git_repo "https://github.com/tmux-plugins/tmux-copycat.git" "$TMUX_PLUGIN_DIR/tmux-copycat" "$TMUX_COPYCAT_VERSION"
-    install_git_repo "https://github.com/nhdaly/tmux-better-mouse-mode.git" "$TMUX_PLUGIN_DIR/tmux-better-mouse-mode" "$TMUX_BETTER_MOUSE_MODE_VERSION"
+    install_git_dependency "https://github.com/tmux-plugins/tpm.git" "$TMUX_PLUGIN_DIR/tpm" TPM_VERSION
+    install_git_dependency "https://github.com/tmux-plugins/tmux-copycat.git" "$TMUX_PLUGIN_DIR/tmux-copycat" TMUX_COPYCAT_VERSION
+    install_git_dependency "https://github.com/nhdaly/tmux-better-mouse-mode.git" "$TMUX_PLUGIN_DIR/tmux-better-mouse-mode" TMUX_BETTER_MOUSE_MODE_VERSION
+}
+
+git_dependencies() {
+    printf '%s\t%s\n' "https://github.com/so-fancy/diff-so-fancy.git" "$HOME/.local/share/diff-so-fancy"
+    printf '%s\t%s\n' "https://github.com/ohmyzsh/ohmyzsh.git" "$ZSH"
+    printf '%s\t%s\n' "https://github.com/zsh-users/zsh-autosuggestions.git" "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+    printf '%s\t%s\n' "https://github.com/zsh-users/zsh-syntax-highlighting.git" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+    printf '%s\t%s\n' "https://github.com/xvoland/Extract.git" "$ZSH_CUSTOM/plugins/extract"
+    printf '%s\t%s\n' "https://github.com/folke/lazy.nvim.git" "$NVIM_LAZY_DIR"
+    printf '%s\t%s\n' "https://github.com/tmux-plugins/tpm.git" "$TMUX_PLUGIN_DIR/tpm"
+    printf '%s\t%s\n' "https://github.com/tmux-plugins/tmux-copycat.git" "$TMUX_PLUGIN_DIR/tmux-copycat"
+    printf '%s\t%s\n' "https://github.com/nhdaly/tmux-better-mouse-mode.git" "$TMUX_PLUGIN_DIR/tmux-better-mouse-mode"
+}
+
+write_git_lock() {
+    local repo
+    local dir
+    local commit
+    local parent_dir
+
+    parent_dir="$(dirname "$LOCK_FILE")"
+    run_quiet mkdir -p "$parent_dir"
+
+    if [ "$DRY_RUN" = true ]; then
+        echo "+ write Git dependency lock to $LOCK_FILE"
+        return 0
+    fi
+
+    {
+        printf '# repo\tcommit\n'
+        while IFS=$'\t' read -r repo dir; do
+            if [ -d "$dir/.git" ]; then
+                commit="$(git -C "$dir" rev-parse HEAD)"
+                printf '%s\t%s\n' "$(normalize_git_url "$repo")" "$commit"
+            else
+                warn "Skipping unlocked dependency: $dir is not installed"
+            fi
+        done < <(git_dependencies)
+    } > "$LOCK_FILE"
+
+    echo -e "${GREEN}Wrote $LOCK_FILE${NC}"
 }
 
 # Backup existing config files
@@ -555,72 +663,29 @@ stow_link() {
 
 # Install dependencies or plugins (customize as needed)
 install_dependencies_or_plugins() {
+    local package
+
     echo -e "${BLUE}Installing packages...${NC}"
 
-    # font support
-    install_apt_package "fonts-jetbrains-mono"
-    install_apt_package "fonts-noto-cjk"
-    install_apt_package "fonts-noto-color-emoji"
+    for package in "${APT_PACKAGES[@]}"; do
+        install_apt_package "$package"
+    done
 
-    # git
-    install_apt_package "git"
     # diff-so-fancy download + symlink
-    install_git_repo "https://github.com/so-fancy/diff-so-fancy.git" "$HOME/.local/share/diff-so-fancy" "$DIFF_SO_FANCY_VERSION"
+    install_git_dependency "https://github.com/so-fancy/diff-so-fancy.git" "$HOME/.local/share/diff-so-fancy" DIFF_SO_FANCY_VERSION
     if [ ! -d "$HOME/.local/bin" ]; then
         run_quiet mkdir -p "$HOME/.local/bin"
     fi
     run_quiet ln -sf "$HOME/.local/share/diff-so-fancy/diff-so-fancy" "$HOME/.local/bin/diff-so-fancy"
 
-    # stow
-    install_apt_package "stow"
-
     # oh-my-zsh
     install_oh_my_zsh
 
-    # net-tools
-    install_apt_package "net-tools"
-    # traceroute
-    install_apt_package "traceroute"
-
     # neovim
-    install_apt_package "neovim"
     install_neovim_plugins
-    # vim
-#    install_apt_package "vim"
-    # glow
-    install_apt_package "glow"
-    # bat
-    install_apt_package "bat"
-
-    # ssh
-    install_apt_package "openssh-server"
-    install_apt_package "openssh-client"
-
-    # wget
-    install_apt_package "wget"
-    # curl
-    install_apt_package "curl"
 
     # tmux
-    install_apt_package "tmux"
     install_tmux_plugins
-    # fzf
-    install_apt_package "fzf"
-    # ripgrep
-    install_apt_package "ripgrep"
-    # nnn
-    install_apt_package "nnn"
-    # lrzsz
-    install_apt_package "lrzsz"
-    # htop
-    install_apt_package "htop"
-    # xclip
-    install_apt_package "xclip"
-    # yt-dlp
-    install_apt_package "yt-dlp"
-
-    # alacritty
-    install_apt_package "alacritty"
 }
 
 # Link modules (customize as needed)
@@ -632,6 +697,35 @@ link_module(){
     for package in "${STOW_MODULES[@]}"; do
         stow_link "$package"
     done
+}
+
+verify_command() {
+    local label="$1"
+    shift
+
+    echo -e "${BLUE}Verifying $label...${NC}"
+    "$@"
+}
+
+verify_optional_command() {
+    local command_name="$1"
+    local label="$2"
+    shift 2
+
+    if command -v "$command_name" >/dev/null 2>&1; then
+        verify_command "$label" "$@"
+    else
+        warn "Skipping $label: $command_name is not installed"
+    fi
+}
+
+verify_repo() {
+    verify_command "Bash syntax" bash -n "${SCRIPT_CHECKS[@]}"
+    verify_optional_command zsh "Zsh syntax" zsh -n zsh/.zshrc zsh/.config/zsh/setopt.zsh
+    verify_optional_command stow "Stow dry-run" stow -n --no-folding -d "$DOTFILES_DIR" -R -t "$HOME" bash zsh common git tmux nvim
+    verify_optional_command nvim "Neovim headless startup" env NVIM_LOG_FILE=/tmp/nvim-dotfiles-verify.log nvim --headless --clean -u "$DOTFILES_DIR/nvim/.config/nvim/init.lua" +qa
+    verify_optional_command shellcheck "ShellCheck" shellcheck "${SCRIPT_CHECKS[@]}"
+    echo -e "${GREEN}Verification completed.${NC}"
 }
 
 # Main entry point
@@ -665,6 +759,12 @@ main() {
             confirm_backup_targets
             backup_all_configs
             link_module
+            ;;
+        verify)
+            verify_repo
+            ;;
+        lock)
+            write_git_lock
             ;;
     esac
 

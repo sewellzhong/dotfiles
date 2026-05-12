@@ -28,6 +28,18 @@ Options:
     -y, --yes Skip confirmation prompts
     -s        Clean user caches and junk files
     -a        Clean user caches, junk files, and thumbnails
+    --packages
+              Clean apt package caches
+    --composer
+              Clean Composer installer files
+    --gems    Run gem cleanup
+    --history Clean shell history and z data
+    --cache   Clean selected user caches
+    --junk    Clean trash, recent files, hsts, and session junk
+    --editor-state
+              Clean editor backup, swap, shada, undo, and session state
+    --thumbnails
+              Clean thumbnail caches
     -L        Clean selected system logs
     --system-logs
               Clean selected system logs
@@ -81,16 +93,16 @@ confirm() {
 }
 
 confirm_destructive_clean() {
+    local label="$1"
+
     if "$dry_run" || "$assume_yes"; then
         return 0
     fi
 
-    confirm "This will remove caches, shell history, editor state, trash, and other local files. Continue?"
+    confirm "This will remove $label. Continue?"
 }
 
-clean_user_files() {
-    confirm_destructive_clean || return 0
-
+clean_packages() {
     echo -e "$magenta\n Cleaning Debian Packages... \n$white"
     run sudo apt clean
 
@@ -99,22 +111,34 @@ clean_user_files() {
 
     echo -e "$magenta\n Autoremoving Debian Packages... \n$white"
     run sudo apt autoremove
+}
 
+clean_composer() {
     echo -e "$magenta\n Cleaning Composer Installer... \n$white"
     run rm -fv ~/.local/share/composer/20*.phar
+}
 
+clean_gems() {
     echo -e "$magenta\n Cleaning Gems... \n$white"
     run gem cleanup
+}
 
+clean_history() {
+    confirm_destructive_clean "shell history and z data" || return 0
     echo -e "$magenta\n Cleaning Shell History... \n$white"
     truncate_file "$HOME/.bash_history"
     truncate_file "$HOME/.zsh_history"
     truncate_file "$HOME/.z"
     run rm -fv ~/.z.*
+}
 
+clean_cache() {
     echo -e "$magenta\n Cleaning Cache... \n$white"
     run rm -rfv ~/.cache/!(chromium|composer|fontconfig|mozilla|pnpm|thumbnails|thunderbird)
+}
 
+clean_junk() {
+    confirm_destructive_clean "trash, recent files, hsts, and session junk" || return 0
     echo -e "$magenta\n Cleaning Junk Files... \n$white"
     run rm -rfv ~/.local/share/Trash/*
     run rm -fv ~/.local/share/recently-used.xbel
@@ -122,7 +146,10 @@ clean_user_files() {
     run rm -fv ~/.{node_repl,php,python,units}_history
     run rm -fv ~/.wget-hsts
     run rm -fv ~/.xsession-errors*
+}
 
+clean_editor_state() {
+    confirm_destructive_clean "editor state, backups, swap files, shada, and undo files" || return 0
     echo -e "$magenta\n Cleaning Editor... \n$white"
     run rm -rfv ~/.local/share/nano/search_history
     run rm -rfv ~/.local/share/nvim/backup/*
@@ -156,7 +183,13 @@ clean_system_logs() {
 }
 
 main() {
-    local clean_user=false
+    local clean_packages_selected=false
+    local clean_composer_selected=false
+    local clean_gems_selected=false
+    local clean_history_selected=false
+    local clean_cache_selected=false
+    local clean_junk_selected=false
+    local clean_editor_selected=false
     local clean_thumb=false
     local clean_logs=false
 
@@ -178,10 +211,46 @@ main() {
                 assume_yes=true
                 ;;
             -s)
-                clean_user=true
+                clean_packages_selected=true
+                clean_composer_selected=true
+                clean_gems_selected=true
+                clean_history_selected=true
+                clean_cache_selected=true
+                clean_junk_selected=true
+                clean_editor_selected=true
                 ;;
             -a)
-                clean_user=true
+                clean_packages_selected=true
+                clean_composer_selected=true
+                clean_gems_selected=true
+                clean_history_selected=true
+                clean_cache_selected=true
+                clean_junk_selected=true
+                clean_editor_selected=true
+                clean_thumb=true
+                ;;
+            --packages)
+                clean_packages_selected=true
+                ;;
+            --composer)
+                clean_composer_selected=true
+                ;;
+            --gems)
+                clean_gems_selected=true
+                ;;
+            --history)
+                clean_history_selected=true
+                ;;
+            --cache)
+                clean_cache_selected=true
+                ;;
+            --junk)
+                clean_junk_selected=true
+                ;;
+            --editor-state)
+                clean_editor_selected=true
+                ;;
+            --thumbnails)
                 clean_thumb=true
                 ;;
             -L|--system-logs)
@@ -199,7 +268,13 @@ main() {
         echo -e "$red\n Executing in dry-run mode. \n$white"
     fi
 
-    "$clean_user" && clean_user_files
+    "$clean_packages_selected" && clean_packages
+    "$clean_composer_selected" && clean_composer
+    "$clean_gems_selected" && clean_gems
+    "$clean_history_selected" && clean_history
+    "$clean_cache_selected" && clean_cache
+    "$clean_junk_selected" && clean_junk
+    "$clean_editor_selected" && clean_editor_state
     "$clean_thumb" && clean_thumbnails
     "$clean_logs" && clean_system_logs
     return 0

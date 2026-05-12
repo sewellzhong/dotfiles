@@ -61,6 +61,8 @@ Run a specific mode:
 ./dotfiles.sh install
 ./dotfiles.sh backup
 ./dotfiles.sh link
+./dotfiles.sh verify
+./dotfiles.sh lock
 ```
 
 The equivalent long-form syntax is also supported:
@@ -77,6 +79,8 @@ Available modes:
 - `install` - install apt packages, Oh My Zsh, Neovim plugin manager, tmux plugins, and related plugins only.
 - `backup` - move conflicting target files into `~/.dotfiles_backup` only.
 - `link` - back up conflicts, then link modules with Stow only.
+- `verify` - run local syntax, stow dry-run, Neovim startup, and optional ShellCheck checks.
+- `lock` - write installed Git dependency commits to `dotfiles.lock`.
 
 `--dry-run` prints commands instead of running them. It also shows any Git
 dependency repairs that would be made, such as replacing a non-Git directory or
@@ -151,7 +155,13 @@ Check what Stow would do without modifying files:
 stow -n --no-folding -d "$PWD" -R -t "$HOME" zsh
 ```
 
-Run a shell syntax check for repository scripts:
+Run all local verification checks:
+
+```sh
+./dotfiles.sh verify
+```
+
+Or run the individual checks manually:
 
 ```sh
 bash -n dotfiles.sh bin/.local/bin/update bin/.local/bin/update-beauty bin/.local/bin/cleaner bin/.local/bin/rofi-calendar bin/.local/bin/sizeof
@@ -213,6 +223,18 @@ directory and cloning a clean copy. GitHub proxy URLs are normalized before
 comparison, so mirrors that still point at the same `github.com/owner/repo`
 identity are accepted.
 
+To freeze the currently installed Git dependency commits:
+
+```sh
+./dotfiles.sh lock
+```
+
+To install from the lock file instead of following the latest branch heads:
+
+```sh
+DOTFILES_USE_LOCK=true ./dotfiles.sh install
+```
+
 tmux plugins are installed under:
 
 ```text
@@ -224,13 +246,21 @@ plugins during tmux startup.
 
 ## Destructive Helpers
 
-`cleaner -s` removes user caches, shell history, editor state, trash entries,
-and other local files. It prompts before running unless `--dry-run` or `--yes`
-is used.
+`cleaner -s` preserves the legacy broad cleanup behavior, but cleanup can also
+be targeted with `--packages`, `--composer`, `--gems`, `--history`, `--cache`,
+`--junk`, `--editor-state`, and `--thumbnails`. Destructive groups such as
+history, junk, and editor state prompt before running unless `--dry-run` or
+`--yes` is used.
 
 `update-beauty` updates and builds desktop components from repositories under
 `~/.local/src`. It only shows `git clean -fdn` output by default; pass `--clean`
 when you intentionally want it to remove untracked files before building.
+You can run one component at a time:
+
+```sh
+update-beauty rofi
+update-beauty i3 picom
+```
 
 `update` refreshes package managers and runs Neovim plugin updates with
 `lazy.nvim` via:
