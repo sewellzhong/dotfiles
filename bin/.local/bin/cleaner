@@ -5,6 +5,7 @@ red='\e[1;31m'
 white='\e[0;37m'
 dry_run=false
 assume_yes=false
+broad_clean=false
 
 shopt -s extglob
 
@@ -100,6 +101,24 @@ confirm_destructive_clean() {
     fi
 
     confirm "This will remove $label. Continue?"
+}
+
+confirm_broad_clean() {
+    if "$dry_run" || "$assume_yes"; then
+        return 0
+    fi
+
+    cat <<EOF
+Selected broad cleanup groups:
+  - apt package caches
+  - Composer installer files
+  - Ruby gem cleanup
+  - shell history and z data
+  - selected user caches
+  - trash, recent files, hsts, and session junk
+  - editor backup, swap, shada, undo, and session state
+EOF
+    confirm "Run all selected cleanup groups?"
 }
 
 clean_packages() {
@@ -211,6 +230,7 @@ main() {
                 assume_yes=true
                 ;;
             -s)
+                broad_clean=true
                 clean_packages_selected=true
                 clean_composer_selected=true
                 clean_gems_selected=true
@@ -220,6 +240,7 @@ main() {
                 clean_editor_selected=true
                 ;;
             -a)
+                broad_clean=true
                 clean_packages_selected=true
                 clean_composer_selected=true
                 clean_gems_selected=true
@@ -266,6 +287,10 @@ main() {
 
     if "$dry_run"; then
         echo -e "$red\n Executing in dry-run mode. \n$white"
+    fi
+
+    if "$broad_clean"; then
+        confirm_broad_clean || return 0
     fi
 
     "$clean_packages_selected" && clean_packages

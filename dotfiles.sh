@@ -18,8 +18,9 @@ MODE="full"
 BACKUP_ROOT=""
 BACKUP_TARGETS=()
 STOW_CONFLICTS=()
-LOCK_FILE="${DOTFILES_LOCK_FILE:-$DOTFILES_DIR/dotfiles.lock}"
+LOCK_FILE="${DOTFILES_LOCK_FILE:-$HOME/.cache/dotfiles/dotfiles.lock}"
 DOTFILES_USE_LOCK="${DOTFILES_USE_LOCK:-false}"
+DOTFILES_APT_GROUPS="${DOTFILES_APT_GROUPS:-base desktop server optional}"
 STOW_MODULES=(
     bin
     dircolors
@@ -38,21 +39,13 @@ STOW_MODULES=(
     ripgrep
     alacritty
 )
-APT_PACKAGES=(
-    fonts-jetbrains-mono
-    fonts-noto-cjk
-    fonts-noto-color-emoji
+APT_BASE_PACKAGES=(
     git
     shellcheck
     stow
     zsh
-    autojump
-    net-tools
-    traceroute
     neovim
-    glow
     bat
-    openssh-server
     openssh-client
     wget
     curl
@@ -63,8 +56,22 @@ APT_PACKAGES=(
     lrzsz
     htop
     xclip
-    yt-dlp
+)
+APT_DESKTOP_PACKAGES=(
+    fonts-jetbrains-mono
+    fonts-noto-cjk
+    fonts-noto-color-emoji
     alacritty
+)
+APT_SERVER_PACKAGES=(
+    openssh-server
+)
+APT_OPTIONAL_PACKAGES=(
+    autojump
+    glow
+    net-tools
+    traceroute
+    yt-dlp
 )
 SCRIPT_CHECKS=(
     dotfiles.sh
@@ -110,7 +117,7 @@ Modes:
     backup           Back up conflicting target files only
     link             Back up conflicts, then link modules only
     verify           Run local syntax and dry-run checks only
-    lock             Write current Git dependency commits to dotfiles.lock
+    lock             Write current Git dependency commits to the lock file
 EOF
 }
 
@@ -329,6 +336,43 @@ install_apt_package() {
     else
         echo -e "${GREEN}$1 is already installed${NC}"
     fi
+}
+
+install_apt_package_group() {
+    local group="$1"
+    local package
+    local packages=()
+
+    case "$group" in
+        base)
+            packages=("${APT_BASE_PACKAGES[@]}")
+            ;;
+        desktop)
+            packages=("${APT_DESKTOP_PACKAGES[@]}")
+            ;;
+        server)
+            packages=("${APT_SERVER_PACKAGES[@]}")
+            ;;
+        optional)
+            packages=("${APT_OPTIONAL_PACKAGES[@]}")
+            ;;
+        *)
+            die "Unknown apt package group: $group"
+            ;;
+    esac
+
+    echo -e "${BLUE}Installing apt package group: $group${NC}"
+    for package in "${packages[@]}"; do
+        install_apt_package "$package"
+    done
+}
+
+install_apt_package_groups() {
+    local group
+
+    for group in $DOTFILES_APT_GROUPS; do
+        install_apt_package_group "$group"
+    done
 }
 
 git_dependency_ref() {
@@ -663,13 +707,9 @@ stow_link() {
 
 # Install dependencies or plugins (customize as needed)
 install_dependencies_or_plugins() {
-    local package
-
     echo -e "${BLUE}Installing packages...${NC}"
 
-    for package in "${APT_PACKAGES[@]}"; do
-        install_apt_package "$package"
-    done
+    install_apt_package_groups
 
     # diff-so-fancy download + symlink
     install_git_dependency "https://github.com/so-fancy/diff-so-fancy.git" "$HOME/.local/share/diff-so-fancy" DIFF_SO_FANCY_VERSION

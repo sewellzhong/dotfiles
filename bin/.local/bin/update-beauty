@@ -10,6 +10,7 @@ dry_run=false
 assume_yes=false
 update_all=false
 allow_git_clean=false
+install_system=false
 selected_commands=()
 update_commands=("update_oh-my-zsh" "update_i3" "update_i3blocks"
                  "update_i3lock" "update_rofi" "update_dunst" "update_picom")
@@ -34,6 +35,7 @@ Options:
               Print commands without running them
     -y, --yes Skip confirmation prompts
     --clean   Allow git clean -fd in source repositories
+    --install Install built artifacts into system paths
     -a        Update all packages, with per-package confirmation
 
 Components:
@@ -72,6 +74,9 @@ parse_args() {
                 ;;
             --clean)
                 allow_git_clean=true
+                ;;
+            --install)
+                install_system=true
                 ;;
             -a)
                 update_all=true
@@ -113,6 +118,11 @@ confirm() {
 
 confirm_install() {
     local component="$1"
+
+    if ! "$install_system"; then
+        echo -e "${red}[!] Build complete for $component. Pass --install to write into system paths.${white}"
+        return 1
+    fi
 
     "$dry_run" && return 0
     confirm "Install or overwrite $component in system paths with sudo?"
@@ -192,7 +202,7 @@ update_i3() {
     i3 -v
     row
     echo -e "$magenta\n Installing i3... \n$white"
-    confirm_install "i3" || return 1
+    confirm_install "i3" || return 0
     run sudo install -Dm755 --verbose build/i3 /usr/bin/i3
     run sudo install -Dm755 --verbose build/i3bar /usr/bin/i3bar
     run sudo install -Dm755 --verbose build/i3-config-wizard /usr/bin/i3-config-wizard
@@ -224,7 +234,7 @@ update_i3blocks() {
     i3blocks -V
     row
     echo -e "$magenta\n Installing i3blocks... \n$white"
-    confirm_install "i3blocks" || return 1
+    confirm_install "i3blocks" || return 0
     run sudo make install
     echo -e "$green\n Current i3blocks version: \n$white"
     row
@@ -250,7 +260,7 @@ update_i3lock() {
     i3lock -v
     row
     echo -e "$magenta\n Installing i3lock... \n$white"
-    confirm_install "i3lock" || return 1
+    confirm_install "i3lock" || return 0
     run sudo make install
     echo -e "$green\n Current i3lock version: \n$white"
     row
@@ -259,7 +269,7 @@ update_i3lock() {
     echo -e "$magenta\n Updating i3lock-fancy... \n$white"
     cd "$source_dir/i3lock-fancy" || return
     run git pull
-    confirm_install "i3lock-fancy" || return 1
+    confirm_install "i3lock-fancy" || return 0
     run sudo make install
 }
 
@@ -277,7 +287,7 @@ update_rofi() {
     rofi -v
     row
     echo -e "$magenta\n Installing rofi... \n$white"
-    confirm_install "rofi" || return 1
+    confirm_install "rofi" || return 0
     run sudo install -Dm755 --verbose build/rofi /usr/local/bin/rofi
     echo -e "$green\n Current rofi version: \n$white"
     row
@@ -297,7 +307,7 @@ update_dunst() {
     dunst -v
     row
     echo -e "$magenta\n Installing dunst... \n$white"
-    confirm_install "dunst" || return 1
+    confirm_install "dunst" || return 0
     run sudo make install
     echo -e "$green\n Current dunst version: \n$white"
     row
@@ -318,7 +328,7 @@ update_picom() {
     picom --version
     row
     echo -e "$magenta\n Installing picom... \n$white"
-    confirm_install "picom" || return 1
+    confirm_install "picom" || return 0
     run sudo install -Dm755 --verbose build/src/picom /usr/local/bin/picom
     echo -e "$green\n Current picom version: \n$white"
     row

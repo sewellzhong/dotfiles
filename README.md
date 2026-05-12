@@ -80,11 +80,19 @@ Available modes:
 - `backup` - move conflicting target files into `~/.dotfiles_backup` only.
 - `link` - back up conflicts, then link modules with Stow only.
 - `verify` - run local syntax, stow dry-run, Neovim startup, and optional ShellCheck checks.
-- `lock` - write installed Git dependency commits to `dotfiles.lock`.
+- `lock` - write installed Git dependency commits to the lock file.
 
 `--dry-run` prints commands instead of running them. It also shows any Git
 dependency repairs that would be made, such as replacing a non-Git directory or
 a repository with the wrong remote.
+
+The installer groups apt packages into `base`, `desktop`, `server`, and
+`optional`. By default all groups are installed to preserve the full personal
+environment. To install a smaller set:
+
+```sh
+DOTFILES_APT_GROUPS="base desktop" ./dotfiles.sh install
+```
 
 ## Backup Behavior
 
@@ -229,10 +237,18 @@ To freeze the currently installed Git dependency commits:
 ./dotfiles.sh lock
 ```
 
-To install from the lock file instead of following the latest branch heads:
+By default the lock file is a local machine snapshot written to:
+
+```text
+~/.cache/dotfiles/dotfiles.lock
+```
+
+To use a reproducible lock file shared through this repository, point the lock
+file at a tracked path and enable lock usage:
 
 ```sh
-DOTFILES_USE_LOCK=true ./dotfiles.sh install
+DOTFILES_LOCK_FILE="$PWD/dotfiles.lock" ./dotfiles.sh lock
+DOTFILES_LOCK_FILE="$PWD/dotfiles.lock" DOTFILES_USE_LOCK=true ./dotfiles.sh install
 ```
 
 tmux plugins are installed under:
@@ -255,11 +271,15 @@ history, junk, and editor state prompt before running unless `--dry-run` or
 `update-beauty` updates and builds desktop components from repositories under
 `~/.local/src`. It only shows `git clean -fdn` output by default; pass `--clean`
 when you intentionally want it to remove untracked files before building.
+Builds do not write into system paths by default; pass `--install` when you
+intentionally want to install or overwrite binaries under `/usr/bin` or
+`/usr/local/bin`.
+
 You can run one component at a time:
 
 ```sh
 update-beauty rofi
-update-beauty i3 picom
+update-beauty --install i3 picom
 ```
 
 `update` refreshes package managers and runs Neovim plugin updates with
