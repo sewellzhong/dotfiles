@@ -60,17 +60,33 @@ install_git_repo() {
     fi
 }
 
+# Install oh-my-zsh core
+install_oh_my_zsh_core() {
+    local repo="https://github.com/ohmyzsh/ohmyzsh.git"
+    local version="${OH_MY_ZSH_VERSION:-master}"
+
+    if [ ! -d "$ZSH" ]; then
+        echo -e "${YELLOW}Cloning Oh-My-Zsh: $version ...${NC}"
+        if [ "$version" = "master" ]; then
+            git clone --depth 1 --branch "$version" "$repo" "$ZSH" > /dev/null
+        else
+            git clone "$repo" "$ZSH" > /dev/null
+            git -C "$ZSH" checkout "$version" > /dev/null
+        fi
+
+        echo -e "${YELLOW}Installing Oh-My-Zsh ...${NC}"
+        RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh "$ZSH/tools/install.sh" --unattended > /dev/null
+    else
+        echo -e "${GREEN}Oh-My-Zsh is already installed${NC}"
+    fi
+}
+
 # Install oh-my-zsh
 install_oh_my_zsh() {
     # zsh
     install_apt_package "zsh"
 
-    if [ ! -d "$ZSH" ]; then
-        echo -e "${YELLOW}Installing Oh-My-Zsh ...${NC}"
-        sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended > /dev/null
-    else
-        echo -e "${GREEN}Oh-My-Zsh is already installed${NC}"
-    fi
+    install_oh_my_zsh_core
 
     # autojump
     install_apt_package "autojump"
