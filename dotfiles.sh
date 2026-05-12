@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Set color variables
 RED='\033[0;31m'
@@ -9,13 +9,15 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Set stow-managed directory
-DOTFILES_DIR="$HOME/.dotfiles"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+DOTFILES_DIR="${DOTFILES_DIR:-$SCRIPT_DIR}"
 APT_UPDATED=false
 DRY_RUN=false
 ASSUME_YES=false
 MODE="full"
 BACKUP_ROOT=""
 BACKUP_TARGETS=()
+STOW_CONFLICTS=()
 STOW_MODULES=(
     bin
     dircolors
@@ -42,6 +44,17 @@ ZSH_CUSTOM="$ZSH/custom"
 # Plugin directories
 NVIM_LAZY_DIR="$HOME/.local/share/nvim/lazy/lazy.nvim"
 TMUX_PLUGIN_DIR="$HOME/.config/tmux/plugins"
+
+# Optional version pins. By default plugin repos follow their current branch.
+OH_MY_ZSH_VERSION="${OH_MY_ZSH_VERSION:-}"
+DIFF_SO_FANCY_VERSION="${DIFF_SO_FANCY_VERSION:-}"
+LAZY_NVIM_VERSION="${LAZY_NVIM_VERSION:-}"
+ZSH_AUTOSUGGESTIONS_VERSION="${ZSH_AUTOSUGGESTIONS_VERSION:-}"
+ZSH_SYNTAX_HIGHLIGHTING_VERSION="${ZSH_SYNTAX_HIGHLIGHTING_VERSION:-}"
+ZSH_EXTRACT_VERSION="${ZSH_EXTRACT_VERSION:-}"
+TPM_VERSION="${TPM_VERSION:-}"
+TMUX_COPYCAT_VERSION="${TMUX_COPYCAT_VERSION:-}"
+TMUX_BETTER_MOUSE_MODE_VERSION="${TMUX_BETTER_MOUSE_MODE_VERSION:-}"
 
 usage() {
     cat <<EOF
@@ -132,6 +145,90 @@ run_quiet() {
     fi
 }
 
+warn() {
+    echo -e "${YELLOW}$*${NC}"
+}
+
+die() {
+    echo -e "${RED}$*${NC}" >&2
+    exit 1
+}
+
+confirm_action() {
+    local message="$1"
+    local response
+
+    if [ "$DRY_RUN" = true ] || [ "$ASSUME_YES" = true ]; then
+        return 0
+    fi
+
+    read -r -p "$message [y/N] " response
+    case "$response" in
+        [yY]|[yY][eE][sS])
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+require_command() {
+    local command_name="$1"
+    command -v "$command_name" >/dev/null 2>&1 || die "Missing required command: $command_name"
+}
+
+normalize_git_url() {
+    local url="$1"
+    url="${url%.git}"
+    if [[ "$url" == *github.com* ]]; then
+        url="$(sed 's#.*github.com[:/]#github.com/#' <<<"$url")"
+    elif [[ "$url" == *gitlab.com* ]]; then
+        url="$(sed 's#.*gitlab.com[:/]#gitlab.com/#' <<<"$url")"
+    else
+        url="${url#https://}"
+        url="${url#http://}"
+        url="${url#git@}"
+        url="${url/:/\/}"
+    fi
+    printf '%s\n' "$url"
+}
+
+preflight_common() {
+    [ -d "$DOTFILES_DIR" ] || die "DOTFILES_DIR does not exist: $DOTFILES_DIR"
+    [ -d "$HOME" ] || die "HOME does not exist: $HOME"
+}
+
+preflight_install() {
+    require_command sudo
+    require_command git
+    require_command apt-get
+    require_command dpkg-query
+}
+
+preflight_link() {
+    if ! command -v stow >/dev/null 2>&1; then
+        if [ "$MODE" = "full" ] || [ "$MODE" = "install" ]; then
+            return 0
+        fi
+        die "Missing required command: stow. Run ./dotfiles.sh install first."
+    fi
+}
+
+preflight() {
+    preflight_common
+    case "$MODE" in
+        full|install)
+            preflight_install
+            ;;
+    esac
+    case "$MODE" in
+        full|link)
+            preflight_link
+            ;;
+    esac
+}
+
 init_backup_root() {
     local stamp
     local backup_root
@@ -180,16 +277,6 @@ update_apt_once() {
 }
 
 # Check if a software package is installed
-is_installed_of_path() {
-
-    # Check git-installed packages (stored in a specific directory)
-    if [ -d "$1" ]; then
-        return 0  # Directory exists and is a git repo → installed
-    fi
-
-    return 1  # Neither installed via apt nor git
-}
-
 # Install an apt package
 install_apt_package() {
     if ! is_installed_of_apt "$1"; then
@@ -201,43 +288,72 @@ install_apt_package() {
     fi
 }
 
-# Clone and install via git
+# Clone, update, or repair a Git-managed dependency.
 install_git_repo() {
     local repo="$1"
     local dir="$2"
+    local ref="${3:-}"
     local parent_dir
+    local remote_url=""
+    local backup_dir
+    local current_branch
 
     parent_dir="$(dirname "$dir")"
 
-    if ! is_installed_of_path "$dir"; then
+    if [ ! -e "$dir" ]; then
         echo -e "${YELLOW}Cloning Git repo: $repo${NC}"
         if [ ! -d "$parent_dir" ]; then
             run_quiet mkdir -p "$parent_dir"
         fi
         run_quiet git clone "$repo" "$dir"
+    elif [ ! -d "$dir/.git" ]; then
+        backup_dir="${dir}.repair-backup.$(date +%Y%m%d-%H%M%S)"
+        warn "$dir exists but is not a Git repository."
+        confirm_action "Move it to $backup_dir and clone $repo?" || die "Cancelled."
+        run_quiet mv "$dir" "$backup_dir"
+        run_quiet git clone "$repo" "$dir"
     else
-        echo -e "${GREEN}$dir already exists, skipping clone${NC}"
+        remote_url="$(git -C "$dir" remote get-url origin 2>/dev/null || true)"
+        if [ "$(normalize_git_url "$remote_url")" != "$(normalize_git_url "$repo")" ]; then
+            backup_dir="${dir}.repair-backup.$(date +%Y%m%d-%H%M%S)"
+            warn "$dir has unexpected origin: ${remote_url:-<none>}"
+            confirm_action "Move it to $backup_dir and clone $repo?" || die "Cancelled."
+            run_quiet mv "$dir" "$backup_dir"
+            run_quiet git clone "$repo" "$dir"
+        else
+            echo -e "${GREEN}$dir already exists, updating${NC}"
+            run_quiet git -C "$dir" fetch --tags --prune origin
+            if [ -n "$ref" ]; then
+                run_quiet git -C "$dir" checkout "$ref"
+            else
+                current_branch="$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+                if [ -n "$current_branch" ]; then
+                    run_quiet git -C "$dir" pull --ff-only
+                else
+                    warn "$dir is detached; set a *_VERSION environment variable to pin it explicitly."
+                fi
+            fi
+            return 0
+        fi
+    fi
+
+    if [ -n "$ref" ]; then
+        run_quiet git -C "$dir" checkout "$ref"
     fi
 }
 
 # Install oh-my-zsh core
 install_oh_my_zsh_core() {
     local repo="https://github.com/ohmyzsh/ohmyzsh.git"
-    local version="${OH_MY_ZSH_VERSION:-master}"
 
     if [ ! -d "$ZSH" ]; then
-        echo -e "${YELLOW}Cloning Oh-My-Zsh: $version ...${NC}"
-        if [ "$version" = "master" ]; then
-            run_quiet git clone --depth 1 --branch "$version" "$repo" "$ZSH"
-        else
-            run_quiet git clone "$repo" "$ZSH"
-            run_quiet git -C "$ZSH" checkout "$version"
-        fi
+        echo -e "${YELLOW}Cloning Oh-My-Zsh...${NC}"
+        install_git_repo "$repo" "$ZSH" "$OH_MY_ZSH_VERSION"
 
         echo -e "${YELLOW}Installing Oh-My-Zsh ...${NC}"
         run_quiet env RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh "$ZSH/tools/install.sh" --unattended
     else
-        echo -e "${GREEN}Oh-My-Zsh is already installed${NC}"
+        install_git_repo "$repo" "$ZSH" "$OH_MY_ZSH_VERSION"
     fi
 }
 
@@ -251,17 +367,16 @@ install_oh_my_zsh() {
     # autojump
     install_apt_package "autojump"
     # zsh-autosuggestions
-    install_git_repo "https://github.com/zsh-users/zsh-autosuggestions.git" "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+    install_git_repo "https://github.com/zsh-users/zsh-autosuggestions.git" "$ZSH_CUSTOM/plugins/zsh-autosuggestions" "$ZSH_AUTOSUGGESTIONS_VERSION"
     # zsh-syntax-highlighting
-    install_git_repo "https://github.com/zsh-users/zsh-syntax-highlighting.git" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+    install_git_repo "https://github.com/zsh-users/zsh-syntax-highlighting.git" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" "$ZSH_SYNTAX_HIGHLIGHTING_VERSION"
     # extract
-    install_git_repo "https://github.com/xvoland/Extract.git" "$ZSH_CUSTOM/plugins/extract"
+    install_git_repo "https://github.com/xvoland/Extract.git" "$ZSH_CUSTOM/plugins/extract" "$ZSH_EXTRACT_VERSION"
 }
 
 install_neovim_plugins() {
     echo -e "${BLUE}Installing Neovim plugin manager...${NC}"
-    install_git_repo "https://github.com/folke/lazy.nvim.git" "$NVIM_LAZY_DIR"
-    run_quiet git -C "$NVIM_LAZY_DIR" checkout stable
+    install_git_repo "https://github.com/folke/lazy.nvim.git" "$NVIM_LAZY_DIR" "$LAZY_NVIM_VERSION"
 
     echo -e "${BLUE}Syncing Neovim plugins...${NC}"
     run env DOTFILES_NVIM_SYNC=1 nvim --headless --clean -u "$DOTFILES_DIR/nvim/.config/nvim/init.lua" "+Lazy! sync" +qa
@@ -269,9 +384,9 @@ install_neovim_plugins() {
 
 install_tmux_plugins() {
     echo -e "${BLUE}Installing tmux plugins...${NC}"
-    install_git_repo "https://github.com/tmux-plugins/tpm.git" "$TMUX_PLUGIN_DIR/tpm"
-    install_git_repo "https://github.com/tmux-plugins/tmux-copycat.git" "$TMUX_PLUGIN_DIR/tmux-copycat"
-    install_git_repo "https://github.com/nhdaly/tmux-better-mouse-mode.git" "$TMUX_PLUGIN_DIR/tmux-better-mouse-mode"
+    install_git_repo "https://github.com/tmux-plugins/tpm.git" "$TMUX_PLUGIN_DIR/tpm" "$TPM_VERSION"
+    install_git_repo "https://github.com/tmux-plugins/tmux-copycat.git" "$TMUX_PLUGIN_DIR/tmux-copycat" "$TMUX_COPYCAT_VERSION"
+    install_git_repo "https://github.com/nhdaly/tmux-better-mouse-mode.git" "$TMUX_PLUGIN_DIR/tmux-better-mouse-mode" "$TMUX_BETTER_MOUSE_MODE_VERSION"
 }
 
 # Backup existing config files
@@ -318,13 +433,54 @@ collect_backup_targets() {
     done < <(find "$package_dir" -type f)
 }
 
+collect_stow_conflicts() {
+    local package="$1"
+    local package_dir="$DOTFILES_DIR/$package"
+    local file
+    local dir
+    local target
+
+    if [ ! -d "$package_dir" ]; then
+        return
+    fi
+
+    while IFS= read -r file; do
+        target="${file/#$package_dir/$HOME}"
+        if [ -d "$target" ] && [ ! -L "$target" ]; then
+            STOW_CONFLICTS+=("$target exists as a directory, but $package provides a file")
+        fi
+    done < <(find "$package_dir" -type f)
+
+    while IFS= read -r dir; do
+        [ "$dir" = "$package_dir" ] && continue
+        target="${dir/#$package_dir/$HOME}"
+        if { [ -f "$target" ] || [ -L "$target" ]; } && [ ! -d "$target" ]; then
+            STOW_CONFLICTS+=("$target exists as a file or symlink, but $package provides a directory")
+        fi
+    done < <(find "$package_dir" -type d)
+}
+
 collect_all_backup_targets() {
     local package
 
     BACKUP_TARGETS=()
+    STOW_CONFLICTS=()
     for package in "${STOW_MODULES[@]}"; do
         collect_backup_targets "$package"
+        collect_stow_conflicts "$package"
     done
+}
+
+confirm_stow_conflicts() {
+    local conflict
+
+    [ "${#STOW_CONFLICTS[@]}" -eq 0 ] && return 0
+
+    echo -e "${RED}Stow cannot safely resolve these path-shape conflicts:${NC}"
+    for conflict in "${STOW_CONFLICTS[@]}"; do
+        echo "  - $conflict"
+    done
+    die "Resolve these manually, then rerun the installer."
 }
 
 confirm_backup_targets() {
@@ -409,7 +565,7 @@ install_dependencies_or_plugins() {
     # git
     install_apt_package "git"
     # diff-so-fancy download + symlink
-    install_git_repo "https://github.com/so-fancy/diff-so-fancy.git" "$HOME/.local/share/diff-so-fancy"
+    install_git_repo "https://github.com/so-fancy/diff-so-fancy.git" "$HOME/.local/share/diff-so-fancy" "$DIFF_SO_FANCY_VERSION"
     if [ ! -d "$HOME/.local/bin" ]; then
         run_quiet mkdir -p "$HOME/.local/bin"
     fi
@@ -481,12 +637,14 @@ link_module(){
 # Main entry point
 main() {
     parse_args "$@"
+    preflight
 
     echo -e "${GREEN}dotfiles $MODE started...${NC}"
 
     case "$MODE" in
         full)
             collect_all_backup_targets
+            confirm_stow_conflicts
             confirm_backup_targets
             install_dependencies_or_plugins
             backup_all_configs
@@ -497,11 +655,13 @@ main() {
             ;;
         backup)
             collect_all_backup_targets
+            confirm_stow_conflicts
             confirm_backup_targets
             backup_all_configs
             ;;
         link)
             collect_all_backup_targets
+            confirm_stow_conflicts
             confirm_backup_targets
             backup_all_configs
             link_module

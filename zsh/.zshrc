@@ -34,7 +34,11 @@ plugins=(
 [ -f ~/.config/common/.exports ] && source ~/.config/common/.exports
 
 # Oh My Zsh.
-source $ZSH/oh-my-zsh.sh
+if [ -n "${ZSH:-}" ] && [ -r "$ZSH/oh-my-zsh.sh" ]; then
+    source "$ZSH/oh-my-zsh.sh"
+else
+    print -u2 "Oh My Zsh not found. Run ./dotfiles.sh install to install it."
+fi
 
 # setopt.zsh aliases functions
 [ -f ~/.config/zsh/setopt.zsh ] && source ~/.config/zsh/setopt.zsh
@@ -45,12 +49,14 @@ source $ZSH/oh-my-zsh.sh
 [ -f ~/.config/zsh/.zshrc.local ] && source ~/.config/zsh/.zshrc.local
 
 # dircolors.
-setup-dircolors
+if (( $+functions[setup-dircolors] )); then
+    setup-dircolors
+fi
 
 # Integrated fzf
 if [ -x "$(command -v fzf)" ]; then
     [ ! -d "$HOME/.config/fzf/shell" ] && mkdir -p "$HOME/.config/fzf/shell" >/dev/null
-    [ ! -f "$HOME/.config/fzf/shell/key-bindings.zsh" ] && cp /usr/share/doc/fzf/examples/key-bindings.zsh "$HOME/.config/fzf/shell/" >/dev/null
+    [ ! -f "$HOME/.config/fzf/shell/key-bindings.zsh" ] && [ -r /usr/share/doc/fzf/examples/key-bindings.zsh ] && cp /usr/share/doc/fzf/examples/key-bindings.zsh "$HOME/.config/fzf/shell/" >/dev/null
     [ -f "$HOME/.config/fzf/shell/key-bindings.zsh" ] && source "$HOME/.config/fzf/shell/key-bindings.zsh"
 fi
 

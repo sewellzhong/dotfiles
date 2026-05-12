@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 magenta='\e[1;35m'
 green='\e[1;32m'
@@ -8,6 +9,7 @@ source_dir="$HOME/.local/src"
 dry_run=false
 assume_yes=false
 update_all=false
+allow_git_clean=false
 update_commands=("update_oh-my-zsh" "update_i3" "update_i3blocks"
                  "update_i3lock" "update_rofi" "update_dunst" "update_picom")
 
@@ -30,6 +32,7 @@ Options:
     -n, --dry-run
               Print commands without running them
     -y, --yes Skip confirmation prompts
+    --clean   Allow git clean -fd in source repositories
     -a        Update all packages, with per-package confirmation
 EOF
 }
@@ -47,6 +50,9 @@ parse_args() {
                 ;;
             -y|--yes)
                 assume_yes=true
+                ;;
+            --clean)
+                allow_git_clean=true
                 ;;
             -a)
                 update_all=true
@@ -98,13 +104,20 @@ confirm_git_clean() {
     echo -e "$magenta\n Files that would be removed by git clean: \n$white"
     run git clean -fdn
 
+    if ! "$allow_git_clean"; then
+        echo -e "${red}[!] Skipping git clean. Pass --clean to allow removing untracked files.${white}"
+        return 0
+    fi
+
     "$dry_run" && return 0
     confirm "Remove these untracked files?" || return 1
     run git clean -fd
 }
 
 row() {
-    seq -s '─' 0 "$(tput cols)" | tr -d '[:digit:]'
+    local cols
+    cols="$(tput cols 2>/dev/null || printf '80')"
+    seq -s '─' 0 "$cols" | tr -d '[:digit:]'
 }
 
 # Get latest release.

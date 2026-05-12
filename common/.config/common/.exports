@@ -38,7 +38,7 @@ if [ "$(ps -p $$ -ocomm=)" = "bash" ]; then
     export HISTIGNORE="[bf]g:c:clear:e:exit:h:history:incognito:l:l[adfls]:pwd"
     export HISTSIZE=10000
     # Save and reload the history after each command finishes in another bash session.
-    export PROMPT_COMMAND="history -a; history -c; history -r; $PROMPT_COMMAND"
+    export PROMPT_COMMAND="history -a; history -c; history -r; ${PROMPT_COMMAND:-}"
 fi
 
 # bat.

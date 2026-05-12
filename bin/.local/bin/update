@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 magenta='\e[1;35m'
 white='\e[0;37m'
@@ -65,8 +66,8 @@ update_gem() {
 }
 
 update_vim() {
-    echo -e "$magenta\n Updating Vim Plugins... \n$white"
-    nvim +PlugUpdate +qall
+    echo -e "$magenta\n Updating Neovim Plugins... \n$white"
+    nvim --headless "+Lazy! sync" +qa
 }
 
 update_one_by_one() {
@@ -88,7 +89,7 @@ update_one_by_one() {
 }
 
 main() {
-    case "$1" in
+    case "${1:-}" in
         -h|--help)
             usage
             exit 0

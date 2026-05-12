@@ -5,6 +5,10 @@ Personal dotfiles managed with GNU Stow.
 The repository is organized by module. Each top-level directory mirrors paths
 under `$HOME`, so `stow` can link files into place without copying them.
 
+`dotfiles.sh` uses the directory that contains the script as the dotfiles root,
+so the repository no longer has to live at `~/.dotfiles`. You can still set
+`DOTFILES_DIR` explicitly when needed.
+
 ## Requirements
 
 - Debian/Ubuntu or another apt-based Linux distribution
@@ -15,6 +19,21 @@ under `$HOME`, so `stow` can link files into place without copying them.
 The installer can install missing packages with `apt-get`, including `stow`,
 `zsh`, `tmux`, `neovim`, `bat`, `fzf`, `ripgrep`, `alacritty`, and related
 tools.
+
+The installer performs a small preflight before it does any work:
+
+- install modes require `sudo`, `git`, `apt-get`, and `dpkg-query`
+- link modes require `stow`, unless `full` mode will install it first
+- all modes require a valid `$HOME` and dotfiles directory
+
+Some interactive shortcuts depend on optional tools:
+
+- `diff-so-fancy` improves `git diff` and `git show` paging. Without it, use
+  Git with `--no-pager` or install dependencies with `./dotfiles.sh install`.
+- `fzf` enables shell key bindings and interactive helpers. Startup skips the
+  bindings when packaged example files are unavailable.
+- `xclip` enables clipboard integration for tmux and shell helpers. Clipboard
+  commands will fail until `xclip` is installed.
 
 ## Install
 
@@ -59,6 +78,10 @@ Available modes:
 - `backup` - move conflicting target files into `~/.dotfiles_backup` only.
 - `link` - back up conflicts, then link modules with Stow only.
 
+`--dry-run` prints commands instead of running them. It also shows any Git
+dependency repairs that would be made, such as replacing a non-Git directory or
+a repository with the wrong remote.
+
 ## Backup Behavior
 
 Before linking files, the installer checks for existing target files in
@@ -80,6 +103,10 @@ The installer prints each move before continuing:
 
 If a backup path already exists, the script appends a numeric suffix rather
 than overwriting it.
+
+The installer also checks path-shape conflicts before linking. For example, if
+the repository provides `~/.config/foo` as a directory but the target already
+exists as a file, the installer stops and asks you to resolve it manually.
 
 ## Modules
 
@@ -115,19 +142,33 @@ default.
 Relink a single module manually:
 
 ```sh
-stow --no-folding -d "$HOME/.dotfiles" -R -t "$HOME" zsh
+stow --no-folding -d "$PWD" -R -t "$HOME" zsh
 ```
 
 Check what Stow would do without modifying files:
 
 ```sh
-stow -n --no-folding -d "$HOME/.dotfiles" -R -t "$HOME" zsh
+stow -n --no-folding -d "$PWD" -R -t "$HOME" zsh
 ```
 
 Run a shell syntax check for repository scripts:
 
 ```sh
 bash -n dotfiles.sh bin/.local/bin/update bin/.local/bin/update-beauty bin/.local/bin/cleaner bin/.local/bin/rofi-calendar bin/.local/bin/sizeof
+```
+
+Run a broader local validation pass:
+
+```sh
+./dotfiles.sh --dry-run
+stow -n --no-folding -d "$PWD" -R -t "$HOME" bash zsh common git tmux nvim
+nvim --headless --clean -u "$PWD/nvim/.config/nvim/init.lua" +qa
+```
+
+If `shellcheck` is installed, also run:
+
+```sh
+shellcheck dotfiles.sh bin/.local/bin/update bin/.local/bin/update-beauty bin/.local/bin/cleaner bin/.local/bin/rofi-calendar bin/.local/bin/sizeof
 ```
 
 Install or refresh external plugin managers:
@@ -148,6 +189,30 @@ does not auto-install missing plugins; that behavior is enabled only during the
 installer sync. After changing Neovim plugin specs later, run `:Lazy sync`
 inside Neovim or run `./dotfiles.sh install` again.
 
+The installer follows the latest available plugin revisions by default. To pin
+external Git dependencies for a reproducible install, set any of these
+environment variables before running the installer:
+
+```sh
+OH_MY_ZSH_VERSION=master
+LAZY_NVIM_VERSION=stable
+DIFF_SO_FANCY_VERSION=v1.4.4
+ZSH_AUTOSUGGESTIONS_VERSION=v0.7.1
+ZSH_SYNTAX_HIGHLIGHTING_VERSION=0.8.0
+ZSH_EXTRACT_VERSION=master
+TPM_VERSION=master
+TMUX_COPYCAT_VERSION=master
+TMUX_BETTER_MOUSE_MODE_VERSION=master
+./dotfiles.sh install
+```
+
+Existing Git dependencies are validated before reuse. If a dependency directory
+exists but is not a Git repository, or its `origin` does not match the expected
+project, the installer asks before moving it aside to a `.repair-backup.*`
+directory and cloning a clean copy. GitHub proxy URLs are normalized before
+comparison, so mirrors that still point at the same `github.com/owner/repo`
+identity are accepted.
+
 tmux plugins are installed under:
 
 ```text
@@ -156,6 +221,23 @@ tmux plugins are installed under:
 
 The tmux config only loads TPM when it already exists; it does not clone
 plugins during tmux startup.
+
+## Destructive Helpers
+
+`cleaner -s` removes user caches, shell history, editor state, trash entries,
+and other local files. It prompts before running unless `--dry-run` or `--yes`
+is used.
+
+`update-beauty` updates and builds desktop components from repositories under
+`~/.local/src`. It only shows `git clean -fdn` output by default; pass `--clean`
+when you intentionally want it to remove untracked files before building.
+
+`update` refreshes package managers and runs Neovim plugin updates with
+`lazy.nvim` via:
+
+```sh
+nvim --headless "+Lazy! sync" +qa
+```
 
 ## Notes
 

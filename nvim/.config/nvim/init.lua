@@ -91,22 +91,27 @@ require("lazy").setup({
                { "<leader>e", "<cmd>NvimTreeToggle<cr>", desc = "Toggle File Explorer" },
           },
           config = function()
-          require("nvim-tree").setup({
-               view = {
-                    width = 30,
-                    side = "left",
-               },
-               renderer = {
-                    highlight_git = true,
-                    highlight_opened_files = "all",
-               },
-               filters = {
-                    dotfiles = false, -- Show hidden files
-               },
-               git = {
-                    enable = true,
-               },
-          })
+          local nvim_tree_ok, nvim_tree = pcall(require, "nvim-tree")
+          if nvim_tree_ok then
+               nvim_tree.setup({
+                    view = {
+                         width = 30,
+                         side = "left",
+                    },
+                    renderer = {
+                         highlight_git = true,
+                         highlight_opened_files = "all",
+                    },
+                    filters = {
+                         dotfiles = false, -- Show hidden files
+                    },
+                    git = {
+                         enable = true,
+                    },
+               })
+          else
+               vim.notify("nvim-tree.lua not found. Run :Lazy sync.", vim.log.levels.WARN)
+          end
           end,
      },
 
@@ -137,13 +142,18 @@ require("lazy").setup({
          -- run = ':TSUpdate',
          event = 'BufReadPost',  -- This will load after a file is opened
          config = function()
-         require'nvim-treesitter.configs'.setup {
-             ensure_installed = { "lua" },  -- You can list all the languages you need: "lua", "python", "javascript", "typescript"
-             highlight = {
-                 enable = true,  -- Enable syntax highlighting
-             },
-             -- You can add more configurations here if needed
-         }
+         local treesitter_ok, treesitter_configs = pcall(require, "nvim-treesitter.configs")
+         if treesitter_ok then
+             treesitter_configs.setup {
+                 ensure_installed = { "lua" },  -- You can list all the languages you need: "lua", "python", "javascript", "typescript"
+                 highlight = {
+                     enable = true,  -- Enable syntax highlighting
+                 },
+                 -- You can add more configurations here if needed
+             }
+         else
+             vim.notify("nvim-treesitter not found. Run :Lazy sync.", vim.log.levels.WARN)
+         end
          end,
          ft = { "lua" },  -- Trigger when opening specific file types: "lua", "python", "javascript", "typescript"
      },
@@ -186,49 +196,60 @@ end
 -- ========================
 -- Lualine (statusline)
 -- ========================
-require('lualine').setup {
-     options = {
-          theme = 'auto',
-          section_separators = '',
-          component_separators = '',
-          icons_enabled = true,
-     },
-     sections = {
-          lualine_a = {'mode'},
-          lualine_b = {'branch', 'diff'},
-          lualine_c = {'filename'},
-          lualine_x = {'encoding','fileformat','filetype'},
-          lualine_y = {'progress'},
-          lualine_z = {'location'}
-     },
-}
+local lualine_ok, lualine = pcall(require, "lualine")
+if lualine_ok then
+     lualine.setup {
+          options = {
+               theme = 'auto',
+               section_separators = '',
+               component_separators = '',
+               icons_enabled = true,
+          },
+          sections = {
+               lualine_a = {'mode'},
+               lualine_b = {'branch', 'diff'},
+               lualine_c = {'filename'},
+               lualine_x = {'encoding','fileformat','filetype'},
+               lualine_y = {'progress'},
+               lualine_z = {'location'}
+          },
+     }
+else
+     vim.notify("lualine.nvim not found. Run :Lazy sync.", vim.log.levels.WARN)
+end
 
 -- ========================
 -- Telescope setup
 -- ========================
-local telescope = require("telescope")
-local fb_actions = require("telescope").extensions.file_browser.actions
+local telescope_ok, telescope = pcall(require, "telescope")
+local fb_ok, fb_actions = pcall(function()
+     return require("telescope").extensions.file_browser.actions
+end)
 
-telescope.setup({
-     defaults = {
-          prompt_prefix = "🔍 ",
-          selection_caret = " ",
-          path_display = {"smart"},
-     },
-     extensions = {
-          file_browser = {
-               theme = "ivy",
-               hijack_netrw = true,
-               hidden = true,  -- Show hidden files
-               mappings = {
-                    ["i"] = { ["<C-w>"] = fb_actions.goto_parent_dir },
-                    ["n"] = { ["h"] = fb_actions.goto_parent_dir }
+if telescope_ok and fb_ok then
+     telescope.setup({
+          defaults = {
+               prompt_prefix = "🔍 ",
+               selection_caret = " ",
+               path_display = {"smart"},
+          },
+          extensions = {
+               file_browser = {
+                    theme = "ivy",
+                    hijack_netrw = true,
+                    hidden = true,  -- Show hidden files
+                    mappings = {
+                         ["i"] = { ["<C-w>"] = fb_actions.goto_parent_dir },
+                         ["n"] = { ["h"] = fb_actions.goto_parent_dir }
+                    }
                }
           }
-     }
-})
+     })
 
-telescope.load_extension("file_browser")
+     pcall(telescope.load_extension, "file_browser")
+else
+     vim.notify("telescope.nvim or telescope-file-browser.nvim not found. Run :Lazy sync.", vim.log.levels.WARN)
+end
 
 -- ========================
 -- Keymaps

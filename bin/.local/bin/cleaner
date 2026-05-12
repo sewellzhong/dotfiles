@@ -4,6 +4,7 @@ magenta='\e[1;35m'
 red='\e[1;31m'
 white='\e[0;37m'
 dry_run=false
+assume_yes=false
 
 shopt -s extglob
 
@@ -24,6 +25,7 @@ Usage: $program_name [-option]
 Options:
     --help    Print this message
     --dry-run Print commands without running them
+    -y, --yes Skip confirmation prompts
     -s        Clean user caches and junk files
     -a        Clean user caches, junk files, and thumbnails
     -L        Clean selected system logs
@@ -78,7 +80,17 @@ confirm() {
     esac
 }
 
+confirm_destructive_clean() {
+    if "$dry_run" || "$assume_yes"; then
+        return 0
+    fi
+
+    confirm "This will remove caches, shell history, editor state, trash, and other local files. Continue?"
+}
+
 clean_user_files() {
+    confirm_destructive_clean || return 0
+
     echo -e "$magenta\n Cleaning Debian Packages... \n$white"
     run sudo apt clean
 
@@ -161,6 +173,9 @@ main() {
                 ;;
             --dry-run)
                 dry_run=true
+                ;;
+            -y|--yes)
+                assume_yes=true
                 ;;
             -s)
                 clean_user=true

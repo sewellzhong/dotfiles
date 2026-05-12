@@ -36,12 +36,14 @@ if ! shopt -oq posix; then
 fi
 
 # dircolors.
-setup-dircolors
+if declare -F setup-dircolors >/dev/null 2>&1; then
+    setup-dircolors
+fi
 
 # Integrated fzf
 if [ -x "$(command -v fzf)" ]; then
     [ ! -d "$HOME/.config/fzf/shell" ] && mkdir -p "$HOME/.config/fzf/shell" >/dev/null
-    [ ! -f "$HOME/.config/fzf/shell/key-bindings.bash" ] && cp /usr/share/doc/fzf/examples/key-bindings.bash "$HOME/.config/fzf/shell/" >/dev/null
+    [ ! -f "$HOME/.config/fzf/shell/key-bindings.bash" ] && [ -r /usr/share/doc/fzf/examples/key-bindings.bash ] && cp /usr/share/doc/fzf/examples/key-bindings.bash "$HOME/.config/fzf/shell/" >/dev/null
     [ -f "$HOME/.config/fzf/shell/key-bindings.bash" ] && source "$HOME/.config/fzf/shell/key-bindings.bash"
 fi
 
