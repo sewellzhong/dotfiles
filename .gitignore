@@ -6,3 +6,33 @@
 *.personal
 config.local.*
 .env.local
+
+# Codex local files
+.codex/
+.agents/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs and cache
+*.log
+.cache/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Environment files
+.env
+.env.*
+!.env.example
