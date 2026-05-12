@@ -18,9 +18,9 @@ MODE="full"
 BACKUP_ROOT=""
 BACKUP_TARGETS=()
 STOW_CONFLICTS=()
-LOCK_FILE="${DOTFILES_LOCK_FILE:-$HOME/.cache/dotfiles/dotfiles.lock}"
-DOTFILES_USE_LOCK="${DOTFILES_USE_LOCK:-false}"
-DOTFILES_APT_GROUPS="${DOTFILES_APT_GROUPS:-base desktop server optional}"
+LOCK_FILE="${DOTFILES_LOCK_FILE:-$DOTFILES_DIR/dotfiles.lock}"
+DOTFILES_USE_LOCK="${DOTFILES_USE_LOCK:-true}"
+DOTFILES_APT_GROUPS="${DOTFILES_APT_GROUPS:-base}"
 STOW_MODULES=(
     bin
     dircolors
@@ -760,10 +760,27 @@ verify_optional_command() {
 }
 
 verify_repo() {
+    local nvim_verify_home
+
     verify_command "Bash syntax" bash -n "${SCRIPT_CHECKS[@]}"
     verify_optional_command zsh "Zsh syntax" zsh -n zsh/.zshrc zsh/.config/zsh/setopt.zsh
     verify_optional_command stow "Stow dry-run" stow -n --no-folding -d "$DOTFILES_DIR" -R -t "$HOME" bash zsh common git tmux nvim
-    verify_optional_command nvim "Neovim headless startup" env NVIM_LOG_FILE=/tmp/nvim-dotfiles-verify.log nvim --headless --clean -u "$DOTFILES_DIR/nvim/.config/nvim/init.lua" +qa
+    if command -v nvim >/dev/null 2>&1; then
+        nvim_verify_home="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-nvim-verify.XXXXXX")"
+        if verify_command "Neovim headless startup" env \
+            DOTFILES_VERIFY=1 \
+            XDG_STATE_HOME="$nvim_verify_home/state" \
+            XDG_CACHE_HOME="$nvim_verify_home/cache" \
+            NVIM_LOG_FILE="$nvim_verify_home/nvim.log" \
+            nvim --headless --clean -u "$DOTFILES_DIR/nvim/.config/nvim/init.lua" +qa; then
+            rm -rf "$nvim_verify_home"
+        else
+            rm -rf "$nvim_verify_home"
+            return 1
+        fi
+    else
+        warn "Skipping Neovim headless startup: nvim is not installed"
+    fi
     verify_optional_command shellcheck "ShellCheck" shellcheck "${SCRIPT_CHECKS[@]}"
     echo -e "${GREEN}Verification completed.${NC}"
 }

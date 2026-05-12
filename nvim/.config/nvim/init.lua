@@ -75,6 +75,7 @@ end
 vim.opt.rtp:prepend(lazypath)
 
 local install_missing_plugins = vim.env.DOTFILES_NVIM_SYNC == "1"
+local dotfiles_verify = vim.env.DOTFILES_VERIFY == "1"
 
 require("lazy").setup({
 
@@ -175,7 +176,7 @@ end
 -- None-ls setup
 -- ========================
 local null_ls_ok, null_ls = pcall(require, "null-ls")
-if null_ls_ok then
+if null_ls_ok and not dotfiles_verify then
      local none_ls_sources = {}
      local function add_none_ls_source(command, source)
           if vim.fn.executable(command) == 1 then
@@ -198,7 +199,7 @@ if null_ls_ok then
           vim.keymap.set("n", "<leader>e", vim.diagnostic.open_float, opts)
           end,
      })
-else
+elseif not dotfiles_verify then
      vim.notify("none-ls.nvim not found. Run :Lazy sync after installing lazy.nvim.", vim.log.levels.WARN)
 end
 

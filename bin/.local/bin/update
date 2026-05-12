@@ -2,7 +2,10 @@
 set -euo pipefail
 
 magenta='\e[1;35m'
+red='\e[1;31m'
 white='\e[0;37m'
+dry_run=false
+assume_yes=false
 
 # Since some programs are installed in non-root directories,
 # don't run this script as root to avoid permission conflict.
@@ -20,54 +23,100 @@ Usage: $program_name [-option]
 
 Options:
     --help    Print this message
-    -a        Update all packages
+    -n, --dry-run
+              Print commands without running them
+    -y, --yes Skip confirmation prompts
+    -a        Update all packages, with one confirmation
 EOF
+}
+
+run() {
+    if "$dry_run"; then
+        printf '+'
+        printf ' %q' "$@"
+        printf '\n'
+    else
+        "$@"
+    fi
+}
+
+confirm() {
+    local message="$1"
+    local response
+
+    "$assume_yes" && return 0
+    read -r -p "$message [y/N] " response
+    case "$response" in
+        [yY]|[yY][eE][sS])
+            return 0
+            ;;
+        *)
+            echo "Cancelled."
+            return 1
+            ;;
+    esac
+}
+
+require_command() {
+    local command_name="$1"
+
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo -e "${red}[!] Skipping: $command_name is not installed.${white}"
+        return 1
+    fi
 }
 
 # Installer.
 update_apt() {
+    require_command sudo || return 0
+    require_command apt-get || return 0
     echo -e "$magenta\n Updating List System Packages... \n$white"
-    sudo apt-get update
+    run sudo apt-get update
 
     echo -e "$magenta\n List System Packages... \n$white"
-    sudo apt-get dist-upgrade
+    run sudo apt-get dist-upgrade
 }
 
 update_composer() {
+    require_command composer || return 0
     echo -e "$magenta\n Updating Composer Installer... \n$white"
-    composer self-update --stable
+    run composer self-update --stable
 
     echo -e "$magenta\n Updating Composer Packages... \n$white"
-    composer global update
+    run composer global update
 }
 
 update_pnpm() {
+    require_command pnpm || return 0
     echo -e "$magenta\n Updating pnpm... \n$white"
-    pnpm add -g pnpm
+    run pnpm add -g pnpm
 
     echo -e "$magenta\n Updating pnpm Packages... \n$white"
-    pnpm update -g
+    run pnpm update -g
 }
 
 update_rustup() {
+    require_command rustup || return 0
     echo -e "$magenta\n Updating rustup... \n$white"
-    rustup self update
+    run rustup self update
 
     echo -e "$magenta\n Updating Rust... \n$white"
-    rustup update
+    run rustup update
 }
 
 update_gem() {
+    require_command gem || return 0
     echo -e "$magenta\n Updating Gem System... \n$white"
-    gem update --system
+    run gem update --system
 
     echo -e "$magenta\n Updating Gems... \n$white"
-    gem update
+    run gem update
 }
 
 update_vim() {
+    require_command nvim || return 0
     echo -e "$magenta\n Updating Neovim Plugins... \n$white"
-    nvim --headless "+Lazy! sync" +qa
+    run nvim --headless "+Lazy! sync" +qa
 }
 
 update_one_by_one() {
@@ -79,7 +128,7 @@ update_one_by_one() {
         read -r -p "Do you want to ${update_command//_/ } packages? [y/n] " response
         case $response in
             [yY][eE][sS]|[yY])
-                $update_command
+                "$update_command"
                 ;;
             *)
                 echo "Cancelled."
@@ -89,27 +138,46 @@ update_one_by_one() {
 }
 
 main() {
-    case "${1:-}" in
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        '')
-            update_one_by_one
-            ;;
-        -a)
-            update_apt
-            update_composer
-            update_pnpm
-            update_rustup
-            update_gem
-            update_vim
-            ;;
-        *)
-            echo "Command not found"
-            exit 1
-            ;;
-    esac
+    local update_all=false
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            -n|--dry-run)
+                dry_run=true
+                ;;
+            -y|--yes)
+                assume_yes=true
+                ;;
+            -a)
+                update_all=true
+                ;;
+            *)
+                echo "Command not found: $1"
+                exit 1
+                ;;
+        esac
+        shift
+    done
+
+    if "$dry_run"; then
+        echo -e "$red\n Executing in dry-run mode. \n$white"
+    fi
+
+    if "$update_all"; then
+        confirm "Run all update groups?" || return 0
+        update_apt
+        update_composer
+        update_pnpm
+        update_rustup
+        update_gem
+        update_vim
+    else
+        update_one_by_one
+    fi
 }
 
 main "$@"

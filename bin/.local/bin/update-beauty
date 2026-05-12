@@ -14,6 +14,7 @@ install_system=false
 selected_commands=()
 update_commands=("update_oh-my-zsh" "update_i3" "update_i3blocks"
                  "update_i3lock" "update_rofi" "update_dunst" "update_picom")
+DOTFILES_UPDATE_BEAUTY_REF="${DOTFILES_UPDATE_BEAUTY_REF:-}"
 
 # Since some programs are installed in non-root directories,
 # don't run this script as root to avoid permission conflict.
@@ -37,6 +38,10 @@ Options:
     --clean   Allow git clean -fd in source repositories
     --install Install built artifacts into system paths
     -a        Update all packages, with per-package confirmation
+
+Environment:
+    DOTFILES_UPDATE_BEAUTY_REF
+              Checkout this explicit ref instead of discovering latest release
 
 Components:
     oh-my-zsh, i3, i3blocks, i3lock, rofi, dunst, picom
@@ -116,6 +121,23 @@ confirm() {
     esac
 }
 
+require_command() {
+    local command_name="$1"
+
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo -e "${red}[!] Missing required command: $command_name${white}"
+        return 1
+    fi
+}
+
+preflight_source_repo() {
+    require_command git || return 1
+    require_command curl || return 1
+    if [ -z "$DOTFILES_UPDATE_BEAUTY_REF" ]; then
+        require_command jq || return 1
+    fi
+}
+
 confirm_install() {
     local component="$1"
 
@@ -154,23 +176,34 @@ get_latest_release() {
     local username_and_repo
     username_and_repo=$(git config --get remote.origin.url | $regex_to_remove_url)
     check_latest_release() {
-        curl -s "https://api.github.com/repos/$username_and_repo/releases/latest" | awk -F '"' '/tag_name/{print $4}'
+        curl -fsS "https://api.github.com/repos/$username_and_repo/releases/latest" | awk -F '"' '/tag_name/{print $4}'
     }
     if [ -n "$(check_latest_release)" ]; then
         check_latest_release
     else
-        curl -s "https://api.github.com/repos/$username_and_repo/tags" | jq -r '.[] | select(.name|test("^(|v)[0-9]")) | .name' | head -n 1
+        curl -fsS "https://api.github.com/repos/$username_and_repo/tags" | jq -r '.[] | select(.name|test("^(|v)[0-9]")) | .name' | head -n 1
     fi
 }
 
 # Use latest release.
 use_latest_release() {
     local get_version
+
+    preflight_source_repo || return 1
+    if [ -n "$DOTFILES_UPDATE_BEAUTY_REF" ]; then
+        confirm_git_clean || return 1
+        run git fetch --tags --prune origin || return 1
+        run git checkout "$DOTFILES_UPDATE_BEAUTY_REF"
+        run git rev-parse --short HEAD
+        return 0
+    fi
+
     get_version=$(get_latest_release)
     if [ -n "$get_version" ]; then
         confirm_git_clean || return 1
         run git fetch origin tag "$get_version" --no-tags || return 1
         run git checkout "$get_version"
+        run git rev-parse --short HEAD
     else
         echo -e "${red}[!] Error: There is an internet connection issue.${white}"
         return 1

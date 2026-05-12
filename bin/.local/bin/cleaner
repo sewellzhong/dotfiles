@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 magenta='\e[1;35m'
 red='\e[1;31m'
@@ -6,6 +7,7 @@ white='\e[0;37m'
 dry_run=false
 assume_yes=false
 broad_clean=false
+dangerous=false
 
 shopt -s extglob
 
@@ -27,6 +29,8 @@ Options:
     --help    Print this message
     --dry-run Print commands without running them
     -y, --yes Skip confirmation prompts
+    --dangerous
+              Allow irreversible cleanup groups
     -s        Clean user caches and junk files
     -a        Clean user caches, junk files, and thumbnails
     --packages
@@ -103,6 +107,17 @@ confirm_destructive_clean() {
     confirm "This will remove $label. Continue?"
 }
 
+confirm_dangerous_clean() {
+    local label="$1"
+
+    if ! "$dangerous"; then
+        echo "Skipping $label. Pass --dangerous to allow this irreversible cleanup group."
+        return 1
+    fi
+
+    confirm_destructive_clean "$label"
+}
+
 confirm_broad_clean() {
     if "$dry_run" || "$assume_yes"; then
         return 0
@@ -143,7 +158,7 @@ clean_gems() {
 }
 
 clean_history() {
-    confirm_destructive_clean "shell history and z data" || return 0
+    confirm_dangerous_clean "shell history and z data" || return 0
     echo -e "$magenta\n Cleaning Shell History... \n$white"
     truncate_file "$HOME/.bash_history"
     truncate_file "$HOME/.zsh_history"
@@ -168,7 +183,7 @@ clean_junk() {
 }
 
 clean_editor_state() {
-    confirm_destructive_clean "editor state, backups, swap files, shada, and undo files" || return 0
+    confirm_dangerous_clean "editor state, backups, swap files, shada, and undo files" || return 0
     echo -e "$magenta\n Cleaning Editor... \n$white"
     run rm -rfv ~/.local/share/nano/search_history
     run rm -rfv ~/.local/share/nvim/backup/*
@@ -188,9 +203,7 @@ clean_thumbnails() {
 }
 
 clean_system_logs() {
-    if ! "$dry_run"; then
-        confirm "This will truncate selected system logs. Continue?" || return 0
-    fi
+    confirm_dangerous_clean "selected system logs" || return 0
 
     echo -e "$magenta\n Cleaning Log System... \n$white"
 
@@ -228,6 +241,9 @@ main() {
                 ;;
             -y|--yes)
                 assume_yes=true
+                ;;
+            --dangerous)
+                dangerous=true
                 ;;
             -s)
                 broad_clean=true
