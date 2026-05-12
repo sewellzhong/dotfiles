@@ -13,6 +13,8 @@ DOTFILES_DIR="$HOME/.dotfiles"
 APT_UPDATED=false
 DRY_RUN=false
 ASSUME_YES=false
+MODE="full"
+BACKUP_ROOT=""
 BACKUP_TARGETS=()
 STOW_MODULES=(
     bin
@@ -37,15 +39,39 @@ STOW_MODULES=(
 ZSH="$HOME/.oh-my-zsh"
 ZSH_CUSTOM="$ZSH/custom"
 
+# Plugin directories
+NVIM_LAZY_DIR="$HOME/.local/share/nvim/lazy/lazy.nvim"
+TMUX_PLUGIN_DIR="$HOME/.config/tmux/plugins"
+
 usage() {
     cat <<EOF
-Usage: ${0##*/} [options]
+Usage: ${0##*/} [mode] [options]
 
 Options:
-    -h, --help     Print this message
-    -n, --dry-run  Print actions without running them
-    -y, --yes      Skip confirmation prompts
+    -h, --help       Print this message
+    -n, --dry-run    Print actions without running them
+    -y, --yes        Skip confirmation prompts
+    -m, --mode MODE  Run one mode: full, install, backup, link
+
+Modes:
+    full             Install dependencies, back up conflicts, then link modules
+    install          Install dependencies and plugins only
+    backup           Back up conflicting target files only
+    link             Back up conflicts, then link modules only
 EOF
+}
+
+set_mode() {
+    case "$1" in
+        full|install|backup|link)
+            MODE="$1"
+            ;;
+        *)
+            echo -e "${RED}Unknown mode: $1${NC}"
+            usage
+            exit 1
+            ;;
+    esac
 }
 
 parse_args() {
@@ -60,6 +86,21 @@ parse_args() {
                 ;;
             -y|--yes)
                 ASSUME_YES=true
+                ;;
+            -m|--mode)
+                if [ "$#" -lt 2 ]; then
+                    echo -e "${RED}Missing value for $1${NC}"
+                    usage
+                    exit 1
+                fi
+                set_mode "$2"
+                shift
+                ;;
+            --mode=*)
+                set_mode "${1#*=}"
+                ;;
+            full|install|backup|link)
+                set_mode "$1"
                 ;;
             *)
                 echo -e "${RED}Unknown option: $1${NC}"
@@ -89,6 +130,39 @@ run_quiet() {
     else
         "$@" > /dev/null
     fi
+}
+
+init_backup_root() {
+    local stamp
+    local backup_root
+    local counter=0
+
+    [ -n "$BACKUP_ROOT" ] && return 0
+
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    backup_root="$HOME/.dotfiles_backup/$stamp"
+
+    while [ -e "$backup_root" ] || [ -L "$backup_root" ]; do
+        counter=$((counter + 1))
+        backup_root="$HOME/.dotfiles_backup/$stamp-$counter"
+    done
+
+    BACKUP_ROOT="$backup_root"
+}
+
+backup_path_for() {
+    local target="$1"
+    local backup_target
+    local counter=0
+
+    backup_target="$BACKUP_ROOT${target#$HOME}"
+
+    while [ -e "$backup_target" ] || [ -L "$backup_target" ]; do
+        counter=$((counter + 1))
+        backup_target="$BACKUP_ROOT${target#$HOME}.$counter"
+    done
+
+    printf '%s\n' "$backup_target"
 }
 
 # Check if a software package is installed
@@ -131,9 +205,15 @@ install_apt_package() {
 install_git_repo() {
     local repo="$1"
     local dir="$2"
+    local parent_dir
+
+    parent_dir="$(dirname "$dir")"
 
     if ! is_installed_of_path "$dir"; then
         echo -e "${YELLOW}Cloning Git repo: $repo${NC}"
+        if [ ! -d "$parent_dir" ]; then
+            run_quiet mkdir -p "$parent_dir"
+        fi
         run_quiet git clone "$repo" "$dir"
     else
         echo -e "${GREEN}$dir already exists, skipping clone${NC}"
@@ -178,6 +258,22 @@ install_oh_my_zsh() {
     install_git_repo "https://github.com/xvoland/Extract.git" "$ZSH_CUSTOM/plugins/extract"
 }
 
+install_neovim_plugins() {
+    echo -e "${BLUE}Installing Neovim plugin manager...${NC}"
+    install_git_repo "https://github.com/folke/lazy.nvim.git" "$NVIM_LAZY_DIR"
+    run_quiet git -C "$NVIM_LAZY_DIR" checkout stable
+
+    echo -e "${BLUE}Syncing Neovim plugins...${NC}"
+    run env DOTFILES_NVIM_SYNC=1 nvim --headless --clean -u "$DOTFILES_DIR/nvim/.config/nvim/init.lua" "+Lazy! sync" +qa
+}
+
+install_tmux_plugins() {
+    echo -e "${BLUE}Installing tmux plugins...${NC}"
+    install_git_repo "https://github.com/tmux-plugins/tpm.git" "$TMUX_PLUGIN_DIR/tpm"
+    install_git_repo "https://github.com/tmux-plugins/tmux-copycat.git" "$TMUX_PLUGIN_DIR/tmux-copycat"
+    install_git_repo "https://github.com/nhdaly/tmux-better-mouse-mode.git" "$TMUX_PLUGIN_DIR/tmux-better-mouse-mode"
+}
+
 # Backup existing config files
 backup_config() {
     local source="$1"
@@ -186,8 +282,12 @@ backup_config() {
     if [ -L "$target" ] && [ "$(readlink -f "$target")" = "$(readlink -f "$source")" ]; then
         return
     elif [ -f "$target" ] || [ -L "$target" ]; then
-        local backup_target="${target/#$HOME/$HOME/.dotfiles_backup}"
-        local backup_dir="$(dirname "$backup_target")"
+        local backup_target
+        local backup_dir
+
+        init_backup_root
+        backup_target="$(backup_path_for "$target")"
+        backup_dir="$(dirname "$backup_target")"
 
         if [ ! -d "$backup_dir" ]; then
             run_quiet mkdir -p "$backup_dir"
@@ -232,10 +332,11 @@ confirm_backup_targets() {
     local response
 
     [ "${#BACKUP_TARGETS[@]}" -eq 0 ] && return 0
+    init_backup_root
 
-    echo -e "${YELLOW}The following files will be moved to ~/.dotfiles_backup:${NC}"
+    echo -e "${YELLOW}The following files will be moved to $BACKUP_ROOT:${NC}"
     for target in "${BACKUP_TARGETS[@]}"; do
-        echo "  $target"
+        echo "  $target -> $(backup_path_for "$target")"
     done
 
     if [ "$DRY_RUN" = true ] || [ "$ASSUME_YES" = true ]; then
@@ -254,6 +355,34 @@ confirm_backup_targets() {
     esac
 }
 
+backup_module() {
+    local package="$1"
+    local package_dir="$DOTFILES_DIR/$package"
+
+    if [ -d "$package_dir" ]; then
+        find "$package_dir" -type f | while IFS= read -r file; do
+            local target="${file/#$package_dir/$HOME}"
+            backup_config "$file" "$target"
+        done
+    else
+        echo -e "${RED}Stow package $package does not exist, skipping backup${NC}"
+    fi
+}
+
+backup_all_configs() {
+    local package
+
+    if [ "${#BACKUP_TARGETS[@]}" -eq 0 ]; then
+        echo -e "${GREEN}No conflicting config files found${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}Backing up conflicting config files...${NC}"
+    for package in "${STOW_MODULES[@]}"; do
+        backup_module "$package"
+    done
+}
+
 # Link files using stow
 stow_link() {
     local package="$1"
@@ -261,13 +390,7 @@ stow_link() {
 
     local package_dir="$DOTFILES_DIR/$package"
 
-    # Backup if already installed or config files exist
     if [ -d "$package_dir" ]; then
-        find "$package_dir" -type f | while IFS= read -r file; do
-            local target="${file/#$package_dir/$HOME}"
-            backup_config "$file" "$target"
-        done
-
         run_quiet stow --no-folding -d "$DOTFILES_DIR" -R -t "$HOME" "$package"
     else
         echo -e "${RED}Stow package $package does not exist, skipping${NC}"
@@ -305,6 +428,7 @@ install_dependencies_or_plugins() {
 
     # neovim
     install_apt_package "neovim"
+    install_neovim_plugins
     # vim
 #    install_apt_package "vim"
     # glow
@@ -323,6 +447,7 @@ install_dependencies_or_plugins() {
 
     # tmux
     install_apt_package "tmux"
+    install_tmux_plugins
     # fzf
     install_apt_package "fzf"
     # ripgrep
@@ -357,18 +482,33 @@ link_module(){
 main() {
     parse_args "$@"
 
-    echo -e "${GREEN}dotfiles installation started...${NC}"
+    echo -e "${GREEN}dotfiles $MODE started...${NC}"
 
-    collect_all_backup_targets
-    confirm_backup_targets
+    case "$MODE" in
+        full)
+            collect_all_backup_targets
+            confirm_backup_targets
+            install_dependencies_or_plugins
+            backup_all_configs
+            link_module
+            ;;
+        install)
+            install_dependencies_or_plugins
+            ;;
+        backup)
+            collect_all_backup_targets
+            confirm_backup_targets
+            backup_all_configs
+            ;;
+        link)
+            collect_all_backup_targets
+            confirm_backup_targets
+            backup_all_configs
+            link_module
+            ;;
+    esac
 
-    # Install dependencies or plugins (customize as needed)
-    install_dependencies_or_plugins
-
-    # Link modules (customize as needed)
-    link_module
-
-    echo -e "${GREEN}dotfiles installation completed!${NC}"
+    echo -e "${GREEN}dotfiles $MODE completed!${NC}"
 }
 
 main "$@"

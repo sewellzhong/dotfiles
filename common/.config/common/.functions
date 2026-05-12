@@ -40,6 +40,19 @@ incognito() {
     fi
 }
 
+# Load LS_COLORS from the custom dircolors database, falling back to defaults.
+setup-dircolors() {
+    local dircolors_file="${1:-$HOME/.config/dircolors/.dircolors}"
+
+    command -v dircolors >/dev/null 2>&1 || return 0
+
+    if [ -r "$dircolors_file" ]; then
+        eval "$(dircolors -b "$dircolors_file")"
+    else
+        eval "$(dircolors -b)"
+    fi
+}
+
 # Git commit browser
 fshow() {
     local commit_hash="echo {} | grep -o '[a-f0-9]\{7\}' | head -1"

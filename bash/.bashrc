@@ -36,7 +36,7 @@ if ! shopt -oq posix; then
 fi
 
 # dircolors.
-[ -x "$(command -v dircolors)" ] && eval "$(dircolors -b ~/.config/dircolors/.dircolors >/dev/null)"
+setup-dircolors
 
 # Integrated fzf
 if [ -x "$(command -v fzf)" ]; then

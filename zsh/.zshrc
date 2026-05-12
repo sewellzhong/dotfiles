@@ -45,7 +45,7 @@ source $ZSH/oh-my-zsh.sh
 [ -f ~/.config/zsh/.zshrc.local ] && source ~/.config/zsh/.zshrc.local
 
 # dircolors.
-[ -x "$(command -v dircolors)" ] && eval "$(dircolors -b ~/.config/dircolors/.dircolors >/dev/null)"
+setup-dircolors
 
 # Integrated fzf
 if [ -x "$(command -v fzf)" ]; then

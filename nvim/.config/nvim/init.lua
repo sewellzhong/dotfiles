@@ -69,13 +69,12 @@ opt.undodir = data_path .. "/undo"
 -- ========================
 local lazypath = data_path .. "/lazy/lazy.nvim"
 if not vim.loop.fs_stat(lazypath) then
-     vim.fn.system({
-          "git", "clone", "--filter=blob:none",
-          "https://github.com/folke/lazy.nvim.git",
-          "--branch=stable", lazypath,
-     })
+     vim.notify("lazy.nvim not found. Run ./dotfiles.sh install to install Neovim plugins.", vim.log.levels.WARN)
+     return
 end
 vim.opt.rtp:prepend(lazypath)
+
+local install_missing_plugins = vim.env.DOTFILES_NVIM_SYNC == "1"
 
 require("lazy").setup({
 
@@ -129,8 +128,8 @@ require("lazy").setup({
      -- Lualine (statusline)
      { "nvim-lualine/lualine.nvim", event = "VeryLazy", dependencies = { "nvim-tree/nvim-web-devicons" } },
 
-     -- Null-ls (replaces syntastic)
-     { "jose-elias-alvarez/null-ls.nvim", event = "BufReadPre", dependencies = { "nvim-lua/plenary.nvim" } },
+     -- None-ls (maintained fork of null-ls)
+     { "nvimtools/none-ls.nvim", event = "BufReadPre", dependencies = { "nvim-lua/plenary.nvim" } },
 
      -- nvim-treesitter, loading only when a Lua or Python file is opened
      {
@@ -148,6 +147,10 @@ require("lazy").setup({
          end,
          ft = { "lua" },  -- Trigger when opening specific file types: "lua", "python", "javascript", "typescript"
      },
+}, {
+     install = {
+          missing = install_missing_plugins,
+     },
 })
 
 -- ========================
@@ -159,22 +162,26 @@ if not ok then
 end
 
 -- ========================
--- Null-ls setup
+-- None-ls setup
 -- ========================
-local null_ls = require("null-ls")
-null_ls.setup({
-     sources = {
-          null_ls.builtins.formatting.prettier,
-          null_ls.builtins.diagnostics.eslint,
-          null_ls.builtins.diagnostics.php,
-     },
-     on_attach = function(_, bufnr)
-     local opts = { noremap=true, silent=true, buffer=bufnr }
-     vim.keymap.set("n", "[d", vim.diagnostic.goto_prev, opts)
-     vim.keymap.set("n", "]d", vim.diagnostic.goto_next, opts)
-     vim.keymap.set("n", "<leader>e", vim.diagnostic.open_float, opts)
-     end,
-})
+local null_ls_ok, null_ls = pcall(require, "null-ls")
+if null_ls_ok then
+     null_ls.setup({
+          sources = {
+               null_ls.builtins.formatting.prettier,
+               null_ls.builtins.diagnostics.eslint,
+               null_ls.builtins.diagnostics.php,
+          },
+          on_attach = function(_, bufnr)
+          local opts = { noremap=true, silent=true, buffer=bufnr }
+          vim.keymap.set("n", "[d", vim.diagnostic.goto_prev, opts)
+          vim.keymap.set("n", "]d", vim.diagnostic.goto_next, opts)
+          vim.keymap.set("n", "<leader>e", vim.diagnostic.open_float, opts)
+          end,
+     })
+else
+     vim.notify("none-ls.nvim not found. Run :Lazy sync after installing lazy.nvim.", vim.log.levels.WARN)
+end
 
 -- ========================
 -- Lualine (statusline)
