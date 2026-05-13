@@ -134,8 +134,12 @@ require("lazy").setup({
      -- Lualine (statusline)
      { "nvim-lualine/lualine.nvim", event = "VeryLazy", dependencies = { "nvim-tree/nvim-web-devicons" } },
 
-     -- None-ls (maintained fork of null-ls)
-     { "nvimtools/none-ls.nvim", event = "BufReadPre", dependencies = { "nvim-lua/plenary.nvim" } },
+     -- External tooling, formatters, linters, and LSP
+     { "williamboman/mason.nvim", cmd = "Mason" },
+     { "WhoIsSethDaniel/mason-tool-installer.nvim", dependencies = { "williamboman/mason.nvim" } },
+     { "neovim/nvim-lspconfig", version = "v1.8.0", event = { "BufReadPre", "BufNewFile" }, dependencies = { "williamboman/mason.nvim" } },
+     { "stevearc/conform.nvim", event = { "BufWritePre" } },
+     { "mfussenegger/nvim-lint", event = { "BufReadPost", "BufWritePost", "InsertLeave" } },
 
      -- nvim-treesitter, loading only when a Lua or Python file is opened
      {
@@ -173,35 +177,136 @@ if not ok then
 end
 
 -- ========================
--- None-ls setup
+-- Mason setup
 -- ========================
-local null_ls_ok, null_ls = pcall(require, "null-ls")
-if null_ls_ok and not dotfiles_verify then
-     local none_ls_sources = {}
-     local function add_none_ls_source(command, source)
-          if vim.fn.executable(command) == 1 then
-               table.insert(none_ls_sources, source)
-          else
-               vim.notify(command .. " not found; skipping related none-ls source.", vim.log.levels.WARN)
-          end
+local mason_ok, mason = pcall(require, "mason")
+if mason_ok and not dotfiles_verify then
+     mason.setup()
+else
+     if not dotfiles_verify then
+          vim.notify("mason.nvim not found. Run :Lazy sync.", vim.log.levels.WARN)
+     end
+end
+
+local tool_installer_ok, tool_installer = pcall(require, "mason-tool-installer")
+if tool_installer_ok and not dotfiles_verify then
+     tool_installer.setup({
+          ensure_installed = {
+               "prettier",
+               "prettierd",
+               "eslint_d",
+               "stylua",
+               "shfmt",
+               "shellcheck",
+               "lua-language-server",
+               "typescript-language-server",
+               "html-lsp",
+               "css-lsp",
+               "json-lsp",
+               "intelephense",
+          },
+          auto_update = false,
+          run_on_start = true,
+     })
+end
+
+-- ========================
+-- LSP setup
+-- ========================
+local lspconfig_ok, lspconfig = pcall(require, "lspconfig")
+if lspconfig_ok and not dotfiles_verify then
+     local lsp_capabilities = vim.lsp.protocol.make_client_capabilities()
+     local function lsp_on_attach(_, bufnr)
+          local opts = { noremap = true, silent = true, buffer = bufnr }
+          vim.keymap.set("n", "gd", vim.lsp.buf.definition, opts)
+          vim.keymap.set("n", "gr", vim.lsp.buf.references, opts)
+          vim.keymap.set("n", "K", vim.lsp.buf.hover, opts)
+          vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts)
+          vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, opts)
      end
 
-     add_none_ls_source("prettier", null_ls.builtins.formatting.prettier)
-     add_none_ls_source("eslint", null_ls.builtins.diagnostics.eslint)
-     add_none_ls_source("php", null_ls.builtins.diagnostics.php)
+     local servers = {
+          lua_ls = {
+               settings = {
+                    Lua = {
+                         diagnostics = { globals = { "vim" } },
+                    },
+               },
+          },
+          ts_ls = {},
+          html = {},
+          cssls = {},
+          jsonls = {},
+          intelephense = {},
+     }
 
-     null_ls.setup({
-          sources = none_ls_sources,
-          on_attach = function(_, bufnr)
-          local opts = { noremap=true, silent=true, buffer=bufnr }
-          vim.keymap.set("n", "[d", vim.diagnostic.goto_prev, opts)
-          vim.keymap.set("n", "]d", vim.diagnostic.goto_next, opts)
-          vim.keymap.set("n", "<leader>e", vim.diagnostic.open_float, opts)
+     for server, config in pairs(servers) do
+          config.capabilities = lsp_capabilities
+          config.on_attach = lsp_on_attach
+          lspconfig[server].setup(config)
+     end
+elseif not dotfiles_verify then
+     vim.notify("nvim-lspconfig not found. Run :Lazy sync.", vim.log.levels.WARN)
+end
+
+-- ========================
+-- Formatting setup
+-- ========================
+local conform_ok, conform = pcall(require, "conform")
+if conform_ok and not dotfiles_verify then
+     conform.setup({
+          formatters_by_ft = {
+               javascript = { "prettierd", "prettier", stop_after_first = true },
+               javascriptreact = { "prettierd", "prettier", stop_after_first = true },
+               typescript = { "prettierd", "prettier", stop_after_first = true },
+               typescriptreact = { "prettierd", "prettier", stop_after_first = true },
+               css = { "prettierd", "prettier", stop_after_first = true },
+               scss = { "prettierd", "prettier", stop_after_first = true },
+               html = { "prettierd", "prettier", stop_after_first = true },
+               json = { "prettierd", "prettier", stop_after_first = true },
+               markdown = { "prettierd", "prettier", stop_after_first = true },
+               lua = { "stylua" },
+               sh = { "shfmt" },
+          },
+          format_on_save = {
+               timeout_ms = 1000,
+               lsp_format = "fallback",
+          },
+          notify_on_error = true,
+          notify_no_formatters = false,
+     })
+elseif not dotfiles_verify then
+     vim.notify("conform.nvim not found. Run :Lazy sync.", vim.log.levels.WARN)
+end
+
+-- ========================
+-- Lint setup
+-- ========================
+local lint_ok, lint = pcall(require, "lint")
+if lint_ok and not dotfiles_verify then
+     lint.linters_by_ft = {
+          javascript = { "eslint_d" },
+          javascriptreact = { "eslint_d" },
+          typescript = { "eslint_d" },
+          typescriptreact = { "eslint_d" },
+          php = { "php" },
+          sh = { "shellcheck" },
+     }
+
+     local lint_augroup = vim.api.nvim_create_augroup("DotfilesLint", { clear = true })
+     vim.api.nvim_create_autocmd({ "BufReadPost", "BufWritePost", "InsertLeave" }, {
+          group = lint_augroup,
+          callback = function()
+               lint.try_lint()
           end,
      })
 elseif not dotfiles_verify then
-     vim.notify("none-ls.nvim not found. Run :Lazy sync after installing lazy.nvim.", vim.log.levels.WARN)
+     vim.notify("nvim-lint not found. Run :Lazy sync.", vim.log.levels.WARN)
 end
+
+vim.keymap.set("n", "[d", vim.diagnostic.goto_prev, { noremap = true, silent = true })
+vim.keymap.set("n", "]d", vim.diagnostic.goto_next, { noremap = true, silent = true })
+vim.keymap.set("n", "<leader>d", vim.diagnostic.open_float, { noremap = true, silent = true })
 
 -- ========================
 -- Lualine (statusline)
