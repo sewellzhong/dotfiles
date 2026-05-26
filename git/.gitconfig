@@ -25,6 +25,7 @@
     editor = nvim
     autocrlf = input
     excludesfile = ~/.config/git/.gitignore_global
+    attributesfile = ~/.config/git/.gitattributes_global
 
 [push]
     default = simple

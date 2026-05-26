@@ -1,0 +1,28 @@
+# Treat all text files as text and normalize line endings to LF
+* text=auto eol=lf
+
+# Explicitly set common text file types to LF
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.txt  text eol=lf
+*.sh text eol=lf
+*.bash text eol=lf
+*.zsh text eol=lf
+*.lua text eol=lf
+*.vim text eol=lf
+*.conf text eol=lf
+*.toml text eol=lf
+
+# Mark binary files so Git does not change line endings
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.exe  binary
+*.dll  binary
+*.obsidian binary
