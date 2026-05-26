@@ -18,6 +18,7 @@ MODE="full"
 BACKUP_ROOT=""
 BACKUP_TARGETS=()
 STOW_CONFLICTS=()
+SELECTED_MODULE=""
 LOCK_FILE="${DOTFILES_LOCK_FILE:-$DOTFILES_DIR/dotfiles.lock}"
 DOTFILES_USE_LOCK="${DOTFILES_USE_LOCK:-true}"
 DOTFILES_APT_GROUPS="${DOTFILES_APT_GROUPS:-base}"
@@ -39,6 +40,7 @@ STOW_MODULES=(
     ripgrep
     alacritty
 )
+TARGET_STOW_MODULES=("${STOW_MODULES[@]}")
 APT_BASE_PACKAGES=(
     git
     shellcheck
@@ -103,13 +105,14 @@ TMUX_BETTER_MOUSE_MODE_VERSION="${TMUX_BETTER_MOUSE_MODE_VERSION:-}"
 
 usage() {
     cat <<EOF
-Usage: ${0##*/} [mode] [options]
+Usage: ${0##*/} [mode] [module] [options]
 
 Options:
-    -h, --help       Print this message
-    -n, --dry-run    Print actions without running them
-    -y, --yes        Skip confirmation prompts
-    -m, --mode MODE  Run one mode: full, install, backup, link
+    -h, --help           Print this message
+    -n, --dry-run        Print actions without running them
+    -y, --yes            Skip confirmation prompts
+    -m, --mode MODE      Run one mode: full, install, backup, link
+    -M, --module MODULE  Limit backup or link to one configured module
 
 Modes:
     full             Install dependencies, back up conflicts, then link modules
@@ -118,6 +121,10 @@ Modes:
     link             Back up conflicts, then link modules only
     verify           Run local syntax and dry-run checks only
     lock             Write current Git dependency commits to the lock file
+
+Examples:
+    ${0##*/} link git
+    ${0##*/} backup --module zsh
 EOF
 }
 
@@ -132,6 +139,42 @@ set_mode() {
             exit 1
             ;;
     esac
+}
+
+set_module() {
+    if [ -z "$1" ]; then
+        die "Missing module name."
+    fi
+    if [ -n "$SELECTED_MODULE" ]; then
+        die "Only one module can be selected per run."
+    fi
+    SELECTED_MODULE="$1"
+}
+
+configure_target_modules() {
+    local package
+
+    if [ -z "$SELECTED_MODULE" ]; then
+        TARGET_STOW_MODULES=("${STOW_MODULES[@]}")
+        return 0
+    fi
+
+    case "$MODE" in
+        backup|link)
+            ;;
+        *)
+            die "A single module can only be selected in backup or link mode."
+            ;;
+    esac
+
+    for package in "${STOW_MODULES[@]}"; do
+        if [ "$package" = "$SELECTED_MODULE" ]; then
+            TARGET_STOW_MODULES=("$package")
+            return 0
+        fi
+    done
+
+    die "Unknown stow module: $SELECTED_MODULE"
 }
 
 parse_args() {
@@ -159,17 +202,36 @@ parse_args() {
             --mode=*)
                 set_mode "${1#*=}"
                 ;;
+            -M|--module)
+                if [ "$#" -lt 2 ]; then
+                    echo -e "${RED}Missing value for $1${NC}"
+                    usage
+                    exit 1
+                fi
+                set_module "$2"
+                shift
+                ;;
+            --module=*)
+                set_module "${1#*=}"
+                ;;
             full|install|backup|link|verify|lock)
                 set_mode "$1"
                 ;;
             *)
-                echo -e "${RED}Unknown option: $1${NC}"
-                usage
-                exit 1
+                if { [ "$MODE" = "backup" ] || [ "$MODE" = "link" ]; } &&
+                    [ -z "$SELECTED_MODULE" ] && [[ "$1" != -* ]]; then
+                    set_module "$1"
+                else
+                    echo -e "${RED}Unknown option: $1${NC}"
+                    usage
+                    exit 1
+                fi
                 ;;
         esac
         shift
     done
+
+    configure_target_modules
 }
 
 run() {
@@ -617,7 +679,7 @@ collect_all_backup_targets() {
 
     BACKUP_TARGETS=()
     STOW_CONFLICTS=()
-    for package in "${STOW_MODULES[@]}"; do
+    for package in "${TARGET_STOW_MODULES[@]}"; do
         collect_backup_targets "$package"
         collect_stow_conflicts "$package"
     done
@@ -686,7 +748,7 @@ backup_all_configs() {
     fi
 
     echo -e "${BLUE}Backing up conflicting config files...${NC}"
-    for package in "${STOW_MODULES[@]}"; do
+    for package in "${TARGET_STOW_MODULES[@]}"; do
         backup_module "$package"
     done
 }
@@ -734,7 +796,7 @@ link_module(){
 
     local package
 
-    for package in "${STOW_MODULES[@]}"; do
+    for package in "${TARGET_STOW_MODULES[@]}"; do
         stow_link "$package"
     done
 }
@@ -790,7 +852,11 @@ main() {
     parse_args "$@"
     preflight
 
-    echo -e "${GREEN}dotfiles $MODE started...${NC}"
+    if [ -n "$SELECTED_MODULE" ]; then
+        echo -e "${GREEN}dotfiles $MODE started for module $SELECTED_MODULE...${NC}"
+    else
+        echo -e "${GREEN}dotfiles $MODE started...${NC}"
+    fi
 
     case "$MODE" in
         full)
@@ -825,7 +891,11 @@ main() {
             ;;
     esac
 
-    echo -e "${GREEN}dotfiles $MODE completed!${NC}"
+    if [ -n "$SELECTED_MODULE" ]; then
+        echo -e "${GREEN}dotfiles $MODE completed for module $SELECTED_MODULE!${NC}"
+    else
+        echo -e "${GREEN}dotfiles $MODE completed!${NC}"
+    fi
 }
 
 main "$@"

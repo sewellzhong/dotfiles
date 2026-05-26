@@ -33,6 +33,7 @@
 | 预览安装动作 | `./dotfiles.sh --dry-run` |
 | 默认安装 | `./dotfiles.sh` |
 | 只链接配置 | `./dotfiles.sh link` |
+| 只链接 Git 模块 | `./dotfiles.sh link git` |
 | 运行验证 | `./dotfiles.sh verify` |
 | 更新依赖锁 | `./dotfiles.sh lock` |
 | 桌面环境安装 | `DOTFILES_APT_GROUPS="base desktop" ./dotfiles.sh` |
@@ -87,6 +88,8 @@
 | `./dotfiles.sh install` | 只安装 apt 依赖和外部插件 |
 | `./dotfiles.sh backup` | 只备份会冲突的现有配置 |
 | `./dotfiles.sh link` | 备份冲突后，只链接配置 |
+| `./dotfiles.sh backup git` | 只备份 `git` 模块的冲突配置 |
+| `./dotfiles.sh link git` | 备份冲突后，只链接 `git` 模块 |
 | `./dotfiles.sh verify` | 运行本地验证 |
 | `./dotfiles.sh lock` | 写入当前外部 Git 依赖版本锁 |
 
@@ -96,6 +99,15 @@
 ./dotfiles.sh --mode install
 ./dotfiles.sh --mode backup
 ./dotfiles.sh --mode link
+```
+
+`backup` 和 `link` 可以指定一个模块，既可使用位置参数，也可使用
+`--module`：
+
+```sh
+./dotfiles.sh link git
+./dotfiles.sh backup --module zsh
+./dotfiles.sh link --module git --dry-run
 ```
 
 ### 软件包组
@@ -250,6 +262,14 @@ Run a specific mode:
 ./dotfiles.sh lock
 ```
 
+Limit backup or linking to one configured module:
+
+```sh
+./dotfiles.sh link git
+./dotfiles.sh backup --module zsh
+./dotfiles.sh link --module git --dry-run
+```
+
 Available modes:
 
 | Mode | Description |
@@ -322,7 +342,13 @@ default.
 
 ## 维护命令
 
-Relink one module manually:
+Relink one module through the script, including its conflict backup checks:
+
+```sh
+./dotfiles.sh link git
+```
+
+Run the underlying Stow command manually:
 
 ```sh
 stow --no-folding -d "$PWD" -R -t "$HOME" zsh
