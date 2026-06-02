@@ -4,6 +4,23 @@ ZSH_THEME="af-magic"
 # Case-sensitive completion.
 CASE_SENSITIVE="true"
 
+# Initialize completion system
+autoload -Uz compinit
+compinit
+
+# Enable case-insensitive completion
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+
+# Enable interactive completion menu
+zstyle ':completion:*' menu select
+
+# Enable colored completion list
+zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+
+# Enable completion cache
+zstyle ':completion:*' use-cache yes
+zstyle ':completion:*' cache-path ~/.cache/zsh
+
 # Disable bi-weekly auto-update checks.
 zstyle ':omz:update' mode disabled
 
