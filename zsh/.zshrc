@@ -8,22 +8,6 @@ CASE_SENSITIVE="true"
 autoload -Uz compinit
 compinit
 
-# Enable case-insensitive completion
-zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
-
-# Enable interactive completion menu
-zstyle ':completion:*' menu select
-
-# Enable colored completion list
-zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
-
-# Enable completion cache
-zstyle ':completion:*' use-cache yes
-zstyle ':completion:*' cache-path ~/.cache/zsh
-
-# Disable bi-weekly auto-update checks.
-zstyle ':omz:update' mode disabled
-
 # Disable auto-setting terminal title.
 DISABLE_AUTO_TITLE="true"
 
@@ -38,14 +22,14 @@ HIST_STAMPS="yyyy-mm-dd"
 
 # Plugins.
 plugins=(
-	z
-	archive
-	extract
-	git
-	autojump
-	zsh-autosuggestions
-	zsh-syntax-highlighting
-	)
+    z
+    archive
+    extract
+    git
+    autojump
+    zsh-autosuggestions
+    zsh-syntax-highlighting
+    )
 
 # exports
 [ -f ~/.config/common/.exports ] && source ~/.config/common/.exports
@@ -79,3 +63,24 @@ fi
 
 # Base16 Shell.
 [ -f ~/.local/bin/base16-oxide ] && source ~/.local/bin/base16-oxide
+
+###
+
+# Enable case-insensitive completion
+zstyle ':completion:*' matcher-list \
+  'm:{a-zA-Z}={A-Za-z}' \
+  'r:|=*' \
+  'l:|=* r:|=*'
+
+# Enable interactive completion menu
+zstyle ':completion:*' menu select
+
+# Enable colored completion list
+zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+
+# Enable completion cache
+zstyle ':completion:*' use-cache yes
+zstyle ':completion:*' cache-path ~/.cache/zsh
+
+# Disable bi-weekly auto-update checks.
+zstyle ':omz:update' mode disabled
