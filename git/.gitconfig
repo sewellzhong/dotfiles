@@ -28,6 +28,7 @@
 [core]
     editor = nvim
     autocrlf = input
+    quotepath = false
     excludesfile = ~/.config/git/.gitignore_global
     attributesfile = ~/.config/git/.gitattributes_global
 
