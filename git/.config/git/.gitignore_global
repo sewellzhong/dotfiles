@@ -27,3 +27,40 @@ Desktop.ini
 *.log
 logs/
 *.logs
+
+
+# Java
+target/
+.gradle/
+build/
+
+# Node
+node_modules/
+
+# AI
+.cache/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.jks
+
+# OpenCode
+.opencode/
+
+
+# Codex
+.codex/
+
+# Claude
+.claude/settings.local.json
+
+# OMO Runtime
+**/.omo/run-continuation/
+**/.omo/cache/
+**/.omo/logs/
+**/.omo/tmp/
+**/.omo/state/
