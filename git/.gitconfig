@@ -37,6 +37,7 @@
 
 [pull]
     ff = only
+	rebase = false
 
 [merge]
     tool = nvimdiff
@@ -111,3 +112,5 @@
 #
 #   [core]
 #       sshCommand = "ssh -i ~/.ssh/id_rsa_personal"
+[init]
+	defaultBranch = master
