@@ -36,3 +36,7 @@ temp/
 .env
 .env.*
 !.env.example
+
+# Serialized dependency operations
+.dotfiles-dependencies.lock
+__pycache__/

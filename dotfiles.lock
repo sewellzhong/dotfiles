@@ -6,3 +6,5 @@ github.com/zsh-users/zsh-syntax-highlighting	5eb677bb0fa9a3e60f0eff031dc13926e09
 github.com/xvoland/Extract	601acced4eadb0189ff5dfb7fa9ceb3ff272c6d1
 github.com/folke/lazy.nvim	6c3bda4aca61a13a9c63f1c1d1b16b9d3be90d7a
 github.com/tmux-plugins/tpm	99469c4a9b1ccf77fade25842dc7bafbc8ce9946
+github.com/tmux-plugins/tmux-copycat	d7f7e6c1de0bc0d6915f4beea5be6a8a42045c09
+github.com/nhdaly/tmux-better-mouse-mode	aa59077c635ab21b251bd8cb4dc24c415e64a58e

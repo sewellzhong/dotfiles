@@ -5,19 +5,17 @@ set -euo pipefail
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Set stow-managed directory
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-DOTFILES_DIR="${DOTFILES_DIR:-$SCRIPT_DIR}"
+DOTFILES_DIR="$(cd -- "${DOTFILES_DIR:-$SCRIPT_DIR}" && pwd -P)"
 APT_UPDATED=false
 DRY_RUN=false
 ASSUME_YES=false
 MODE="full"
-BACKUP_ROOT=""
-BACKUP_TARGETS=()
-STOW_CONFLICTS=()
+STATIC_ONLY=false
+RESTORE_BATCH=""
 SELECTED_MODULE=""
 LOCK_FILE="${DOTFILES_LOCK_FILE:-$DOTFILES_DIR/dotfiles.lock}"
 DOTFILES_USE_LOCK="${DOTFILES_USE_LOCK:-true}"
@@ -35,6 +33,7 @@ STOW_MODULES=(
     glow
     htop
     nvim
+    vim
     wget
     yt-dlp
     ripgrep
@@ -44,6 +43,12 @@ TARGET_STOW_MODULES=("${STOW_MODULES[@]}")
 APT_BASE_PACKAGES=(
     git
     shellcheck
+    python3
+    jq
+    bc
+    nodejs
+    npm
+    unzip
     stow
     zsh
     neovim
@@ -84,13 +89,8 @@ SCRIPT_CHECKS=(
     bin/.local/bin/sizeof
 )
 
-# oh-my-zsh directories
-ZSH="$HOME/.oh-my-zsh"
-ZSH_CUSTOM="$ZSH/custom"
-
 # Plugin directories
-NVIM_LAZY_DIR="$HOME/.local/share/nvim/lazy/lazy.nvim"
-TMUX_PLUGIN_DIR="$HOME/.config/tmux/plugins"
+NVIM_LAZY_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim/lazy/lazy.nvim"
 
 # Optional version pins. By default plugin repos follow their current branch.
 OH_MY_ZSH_VERSION="${OH_MY_ZSH_VERSION:-}"
@@ -111,7 +111,8 @@ Options:
     -h, --help           Print this message
     -n, --dry-run        Print actions without running them
     -y, --yes            Skip confirmation prompts
-    -m, --mode MODE      Run one mode: full, install, backup, link
+    -m, --mode MODE      Run one mode: full, install, backup, link, restore, verify, lock
+    --static            Only repository checks (verify mode)
     -M, --module MODULE  Limit backup or link to one configured module
 
 Modes:
@@ -119,7 +120,8 @@ Modes:
     install          Install dependencies and plugins only
     backup           Back up conflicting target files only
     link             Back up conflicts, then link modules only
-    verify           Run local syntax and dry-run checks only
+    restore BATCH    Restore a configuration backup batch
+    verify           Check repository and installed dependencies
     lock             Write current Git dependency commits to the lock file
 
 Examples:
@@ -130,7 +132,7 @@ EOF
 
 set_mode() {
     case "$1" in
-        full|install|backup|link|verify|lock)
+        full|install|backup|link|restore|verify|lock)
             MODE="$1"
             ;;
         *)
@@ -184,6 +186,9 @@ parse_args() {
                 usage
                 exit 0
                 ;;
+            --static)
+                STATIC_ONLY=true
+                ;;
             -n|--dry-run)
                 DRY_RUN=true
                 ;;
@@ -214,11 +219,13 @@ parse_args() {
             --module=*)
                 set_module "${1#*=}"
                 ;;
-            full|install|backup|link|verify|lock)
+            full|install|backup|link|restore|verify|lock)
                 set_mode "$1"
                 ;;
             *)
-                if { [ "$MODE" = "backup" ] || [ "$MODE" = "link" ]; } &&
+                if [ "$MODE" = restore ] && [ -z "$RESTORE_BATCH" ] && [[ "$1" != -* ]]; then
+                    RESTORE_BATCH="$1"
+                elif { [ "$MODE" = "backup" ] || [ "$MODE" = "link" ]; } &&
                     [ -z "$SELECTED_MODULE" ] && [[ "$1" != -* ]]; then
                     set_module "$1"
                 else
@@ -231,6 +238,8 @@ parse_args() {
         shift
     done
 
+    if "$STATIC_ONLY" && [ "$MODE" != verify ]; then die "--static requires verify"; fi
+    if [ "$MODE" = restore ] && [ -z "$RESTORE_BATCH" ]; then die "restore requires a batch name"; fi
     configure_target_modules
 }
 
@@ -288,19 +297,7 @@ require_command() {
 }
 
 normalize_git_url() {
-    local url="$1"
-    url="${url%.git}"
-    if [[ "$url" =~ github\.com[:/](.*)$ ]]; then
-        url="github.com/${BASH_REMATCH[1]}"
-    elif [[ "$url" =~ gitlab\.com[:/](.*)$ ]]; then
-        url="gitlab.com/${BASH_REMATCH[1]}"
-    else
-        url="${url#https://}"
-        url="${url#http://}"
-        url="${url#git@}"
-        url="${url/:/\/}"
-    fi
-    printf '%s\n' "$url"
+    python3 "$SCRIPT_DIR/lib/dependencies.py" normalize "$1"
 }
 
 preflight_common() {
@@ -313,6 +310,8 @@ preflight_install() {
     require_command git
     require_command apt-get
     require_command dpkg-query
+    require_command apt-cache
+    require_command flock
 }
 
 preflight_link() {
@@ -326,6 +325,7 @@ preflight_link() {
 
 preflight() {
     preflight_common
+    require_command python3
     case "$MODE" in
         full|install)
             preflight_install
@@ -339,39 +339,6 @@ preflight() {
             preflight_link
             ;;
     esac
-}
-
-init_backup_root() {
-    local stamp
-    local backup_root
-    local counter=0
-
-    [ -n "$BACKUP_ROOT" ] && return 0
-
-    stamp="$(date +%Y%m%d-%H%M%S)"
-    backup_root="$HOME/.dotfiles_backup/$stamp"
-
-    while [ -e "$backup_root" ] || [ -L "$backup_root" ]; do
-        counter=$((counter + 1))
-        backup_root="$HOME/.dotfiles_backup/$stamp-$counter"
-    done
-
-    BACKUP_ROOT="$backup_root"
-}
-
-backup_path_for() {
-    local target="$1"
-    local backup_target
-    local counter=0
-
-    backup_target="$BACKUP_ROOT${target#"$HOME"}"
-
-    while [ -e "$backup_target" ] || [ -L "$backup_target" ]; do
-        counter=$((counter + 1))
-        backup_target="$BACKUP_ROOT${target#"$HOME"}.$counter"
-    done
-
-    printf '%s\n' "$backup_target"
 }
 
 # Check if a software package is installed
@@ -388,53 +355,34 @@ update_apt_once() {
     fi
 }
 
-# Check if a software package is installed
-# Install an apt package
-install_apt_package() {
-    if ! is_installed_of_apt "$1"; then
-        echo -e "${YELLOW}Installing missing package: $1${NC}"
-        update_apt_once
-        run_quiet sudo apt-get install -y "$1"
-    else
-        echo -e "${GREEN}$1 is already installed${NC}"
-    fi
-}
-
-install_apt_package_group() {
-    local group="$1"
-    local package
-    local packages=()
-
-    case "$group" in
-        base)
-            packages=("${APT_BASE_PACKAGES[@]}")
-            ;;
-        desktop)
-            packages=("${APT_DESKTOP_PACKAGES[@]}")
-            ;;
-        server)
-            packages=("${APT_SERVER_PACKAGES[@]}")
-            ;;
-        optional)
-            packages=("${APT_OPTIONAL_PACKAGES[@]}")
-            ;;
-        *)
-            die "Unknown apt package group: $group"
-            ;;
-    esac
-
-    echo -e "${BLUE}Installing apt package group: $group${NC}"
-    for package in "${packages[@]}"; do
-        install_apt_package "$package"
-    done
-}
-
 install_apt_package_groups() {
-    local group
-
+    local group package nvim_package
+    local packages=() missing=() version_args=()
+    local -A seen=()
+    # Resolve every group before issuing any command which changes the system.
     for group in $DOTFILES_APT_GROUPS; do
-        install_apt_package_group "$group"
+        case "$group" in
+            base) packages+=("${APT_BASE_PACKAGES[@]}") ;;
+            desktop) packages+=("${APT_DESKTOP_PACKAGES[@]}") ;;
+            server) packages+=("${APT_SERVER_PACKAGES[@]}") ;;
+            optional) packages+=("${APT_OPTIONAL_PACKAGES[@]}") ;;
+            *) die "Unknown apt package group: $group" ;;
+        esac
     done
+    "$DRY_RUN" && version_args+=(--dry-run)
+    nvim_package=$(python3 "$SCRIPT_DIR/lib/apt-preflight.py" "${version_args[@]}") || return 1
+    for package in "${packages[@]}" $nvim_package; do
+        [ -z "${seen[$package]:-}" ] || continue
+        seen[$package]=1
+        if [ "$package" = "$nvim_package" ] || ! is_installed_of_apt "$package"; then
+            missing+=("$package")
+        fi
+    done
+    if [ "${#missing[@]}" -gt 0 ]; then
+        update_apt_once
+        run sudo apt-get install -y "${missing[@]}"
+    fi
+    if ! "$DRY_RUN"; then python3 "$SCRIPT_DIR/lib/apt-preflight.py" --installed; fi
 }
 
 git_dependency_ref() {
@@ -454,6 +402,9 @@ git_dependency_ref() {
         ' "$LOCK_FILE")"
     fi
 
+    if [ "$DOTFILES_USE_LOCK" = true ] && [[ ! "$locked_ref" =~ ^[0-9a-f]{40}$ ]]; then
+        die "Missing or invalid lock for $repo in $LOCK_FILE"
+    fi
     printf '%s\n' "$locked_ref"
 }
 
@@ -475,14 +426,14 @@ install_git_repo() {
             run_quiet mkdir -p "$parent_dir"
         fi
         run_quiet git clone "$repo" "$dir"
-    elif [ ! -d "$dir/.git" ]; then
+    elif [ ! -e "$dir/.git" ]; then
         backup_dir="${dir}.repair-backup.$(date +%Y%m%d-%H%M%S)"
         warn "$dir exists but is not a Git repository."
         confirm_action "Move it to $backup_dir and clone $repo?" || die "Cancelled."
         run_quiet mv "$dir" "$backup_dir"
         run_quiet git clone "$repo" "$dir"
     else
-        remote_url="$(git -C "$dir" remote get-url origin 2>/dev/null || true)"
+        remote_url="$(git -C "$dir" config --get remote.origin.url 2>/dev/null || true)"
         if [ "$(normalize_git_url "$remote_url")" != "$(normalize_git_url "$repo")" ]; then
             backup_dir="${dir}.repair-backup.$(date +%Y%m%d-%H%M%S)"
             warn "$dir has unexpected origin: ${remote_url:-<none>}"
@@ -490,6 +441,7 @@ install_git_repo() {
             run_quiet mv "$dir" "$backup_dir"
             run_quiet git clone "$repo" "$dir"
         else
+            python3 "$SCRIPT_DIR/lib/dependencies.py" validate "$dir" "$repo" >/dev/null || return 1
             echo -e "${GREEN}$dir already exists, updating${NC}"
             run_quiet git -C "$dir" fetch --tags --prune origin
             if [ -n "$ref" ]; then
@@ -521,331 +473,80 @@ install_git_dependency() {
     install_git_repo "$repo" "$dir" "$ref"
 }
 
-# Install oh-my-zsh core
-install_oh_my_zsh_core() {
-    local repo="https://github.com/ohmyzsh/ohmyzsh.git"
-
-    if [ ! -d "$ZSH" ]; then
-        echo -e "${YELLOW}Cloning Oh-My-Zsh...${NC}"
-        install_git_dependency "$repo" "$ZSH" OH_MY_ZSH_VERSION
-
-        echo -e "${YELLOW}Installing Oh-My-Zsh ...${NC}"
-        run_quiet env RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh "$ZSH/tools/install.sh" --unattended
-    else
-        install_git_dependency "$repo" "$ZSH" OH_MY_ZSH_VERSION
+# The plugin manager is installed by the shared dependency registry.
+install_neovim_plugins() (
+    local tool temp
+    if "$DRY_RUN"; then
+        echo '+ restore Neovim plugins from the tracked lazy-lock.json'
+        return 0
     fi
-}
-
-# Install oh-my-zsh
-install_oh_my_zsh() {
-    install_oh_my_zsh_core
-    # zsh-autosuggestions
-    install_git_dependency "https://github.com/zsh-users/zsh-autosuggestions.git" "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ZSH_AUTOSUGGESTIONS_VERSION
-    # zsh-syntax-highlighting
-    install_git_dependency "https://github.com/zsh-users/zsh-syntax-highlighting.git" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ZSH_SYNTAX_HIGHLIGHTING_VERSION
-    # extract
-    install_git_dependency "https://github.com/xvoland/Extract.git" "$ZSH_CUSTOM/plugins/extract" ZSH_EXTRACT_VERSION
-}
-
-install_neovim_plugins() {
-    echo -e "${BLUE}Installing Neovim plugin manager...${NC}"
-    install_git_dependency "https://github.com/folke/lazy.nvim.git" "$NVIM_LAZY_DIR" LAZY_NVIM_VERSION
-
-    echo -e "${BLUE}Syncing Neovim plugins...${NC}"
-    run env DOTFILES_NVIM_SYNC=1 nvim --headless --clean -u "$DOTFILES_DIR/nvim/.config/nvim/init.lua" "+Lazy! sync" +qa
-}
-
-install_tmux_plugins() {
-    echo -e "${BLUE}Installing tmux plugins...${NC}"
-    install_git_dependency "https://github.com/tmux-plugins/tpm.git" "$TMUX_PLUGIN_DIR/tpm" TPM_VERSION
-    install_git_dependency "https://github.com/tmux-plugins/tmux-copycat.git" "$TMUX_PLUGIN_DIR/tmux-copycat" TMUX_COPYCAT_VERSION
-    install_git_dependency "https://github.com/nhdaly/tmux-better-mouse-mode.git" "$TMUX_PLUGIN_DIR/tmux-better-mouse-mode" TMUX_BETTER_MOUSE_MODE_VERSION
-}
+    for tool in nvim node npm unzip tar; do require_command "$tool"; done
+    python3 "$SCRIPT_DIR/lib/nvim-preflight.py" "$DOTFILES_DIR/nvim/.config/nvim"
+    temp=$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-nvim-install.XXXXXX")
+    trap 'rm -rf -- "$temp"' EXIT
+    cp "$DOTFILES_DIR/nvim/.config/nvim/lazy-lock.json" "$temp/lazy-lock.json"
+    env NVIM_APPNAME=nvim DOTFILES_NVIM_SYNC=1 DOTFILES_NVIM_LOCK="$temp/lazy-lock.json" \
+        nvim --headless --clean -u "$DOTFILES_DIR/nvim/.config/nvim/init.lua" \
+        '+lua local ok, err = pcall(function() require("dotfiles.install").run() end); if not ok then vim.api.nvim_err_writeln(err); vim.cmd("cquit 1") end'
+)
 
 git_dependencies() {
-    printf '%s\t%s\n' "https://github.com/so-fancy/diff-so-fancy.git" "$HOME/.local/share/diff-so-fancy"
-    printf '%s\t%s\n' "https://github.com/ohmyzsh/ohmyzsh.git" "$ZSH"
-    printf '%s\t%s\n' "https://github.com/zsh-users/zsh-autosuggestions.git" "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
-    printf '%s\t%s\n' "https://github.com/zsh-users/zsh-syntax-highlighting.git" "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
-    printf '%s\t%s\n' "https://github.com/xvoland/Extract.git" "$ZSH_CUSTOM/plugins/extract"
-    printf '%s\t%s\n' "https://github.com/folke/lazy.nvim.git" "$NVIM_LAZY_DIR"
-    printf '%s\t%s\n' "https://github.com/tmux-plugins/tpm.git" "$TMUX_PLUGIN_DIR/tpm"
-    printf '%s\t%s\n' "https://github.com/tmux-plugins/tmux-copycat.git" "$TMUX_PLUGIN_DIR/tmux-copycat"
-    printf '%s\t%s\n' "https://github.com/nhdaly/tmux-better-mouse-mode.git" "$TMUX_PLUGIN_DIR/tmux-better-mouse-mode"
+    python3 "$SCRIPT_DIR/lib/dependencies.py" registry
+}
+
+validate_git_lock() {
+    local repo dir env_name
+    if [ "$DOTFILES_USE_LOCK" = true ]; then
+        require_command python3
+        python3 "$SCRIPT_DIR/lib/check-lock.py" "$LOCK_FILE" "$DOTFILES_DIR/nvim/.config/nvim/lazy-lock.json" || return 1
+    fi
+    while IFS=$'\t' read -r repo dir env_name; do
+        git_dependency_ref "$repo" "$env_name" >/dev/null || return 1
+    done < <(git_dependencies)
 }
 
 write_git_lock() {
-    local repo
-    local dir
-    local commit
-    local parent_dir
-
-    parent_dir="$(dirname "$LOCK_FILE")"
-    run_quiet mkdir -p "$parent_dir"
-
-    if [ "$DRY_RUN" = true ]; then
-        echo "+ write Git dependency lock to $LOCK_FILE"
-        return 0
-    fi
-
-    {
-        printf '# repo\tcommit\n'
-        while IFS=$'\t' read -r repo dir; do
-            if [ -d "$dir/.git" ]; then
-                commit="$(git -C "$dir" rev-parse HEAD)"
-                printf '%s\t%s\n' "$(normalize_git_url "$repo")" "$commit"
-            else
-                warn "Skipping unlocked dependency: $dir is not installed"
-            fi
-        done < <(git_dependencies)
-    } > "$LOCK_FILE"
-
-    echo -e "${GREEN}Wrote $LOCK_FILE${NC}"
+    local args=(lock --repo "$DOTFILES_DIR" --lock "$LOCK_FILE")
+    "$DRY_RUN" && args+=(--dry-run)
+    python3 "$SCRIPT_DIR/lib/update-dependencies.py" "${args[@]}"
 }
 
-# Backup existing config files
-backup_config() {
-    local source="$1"
-    local target="$2"
-
-    if [ -L "$target" ] && [ "$(readlink -f "$target")" = "$(readlink -f "$source")" ]; then
-        return
-    elif [ -f "$target" ] || [ -L "$target" ]; then
-        local backup_target
-        local backup_dir
-
-        init_backup_root
-        backup_target="$(backup_path_for "$target")"
-        backup_dir="$(dirname "$backup_target")"
-
-        if [ ! -d "$backup_dir" ]; then
-            run_quiet mkdir -p "$backup_dir"
-        fi
-
-        echo -e "${YELLOW}Backing up $target to $backup_target${NC}"
-        run_quiet mv "$target" "$backup_target"
-    fi
-}
-
-collect_backup_targets() {
-    local package="$1"
-    local package_dir="$DOTFILES_DIR/$package"
-    local file
-    local target
-
-    if [ ! -d "$package_dir" ]; then
-        return
-    fi
-
-    while IFS= read -r file; do
-        target="${file/#$package_dir/$HOME}"
-        if [ -L "$target" ] && [ "$(readlink -f "$target")" = "$(readlink -f "$file")" ]; then
-            continue
-        elif [ -f "$target" ] || [ -L "$target" ]; then
-            BACKUP_TARGETS+=("$target")
-        fi
-    done < <(find "$package_dir" -type f)
-}
-
-collect_stow_conflicts() {
-    local package="$1"
-    local package_dir="$DOTFILES_DIR/$package"
-    local file
-    local dir
-    local target
-
-    if [ ! -d "$package_dir" ]; then
-        return
-    fi
-
-    while IFS= read -r file; do
-        target="${file/#$package_dir/$HOME}"
-        if [ -d "$target" ] && [ ! -L "$target" ]; then
-            STOW_CONFLICTS+=("$target exists as a directory, but $package provides a file")
-        fi
-    done < <(find "$package_dir" -type f)
-
-    while IFS= read -r dir; do
-        [ "$dir" = "$package_dir" ] && continue
-        target="${dir/#$package_dir/$HOME}"
-        if { [ -f "$target" ] || [ -L "$target" ]; } && [ ! -d "$target" ]; then
-            STOW_CONFLICTS+=("$target exists as a file or symlink, but $package provides a directory")
-        fi
-    done < <(find "$package_dir" -type d)
-}
-
-collect_all_backup_targets() {
-    local package
-
-    BACKUP_TARGETS=()
-    STOW_CONFLICTS=()
-    for package in "${TARGET_STOW_MODULES[@]}"; do
-        collect_backup_targets "$package"
-        collect_stow_conflicts "$package"
-    done
-}
-
-confirm_stow_conflicts() {
-    local conflict
-
-    [ "${#STOW_CONFLICTS[@]}" -eq 0 ] && return 0
-
-    echo -e "${RED}Stow cannot safely resolve these path-shape conflicts:${NC}"
-    for conflict in "${STOW_CONFLICTS[@]}"; do
-        echo "  - $conflict"
-    done
-    die "Resolve these manually, then rerun the installer."
-}
-
-confirm_backup_targets() {
-    local target
-    local response
-
-    [ "${#BACKUP_TARGETS[@]}" -eq 0 ] && return 0
-    init_backup_root
-
-    echo -e "${YELLOW}The following files will be moved to $BACKUP_ROOT:${NC}"
-    for target in "${BACKUP_TARGETS[@]}"; do
-        echo "  $target -> $(backup_path_for "$target")"
-    done
-
-    if [ "$DRY_RUN" = true ] || [ "$ASSUME_YES" = true ]; then
-        return 0
-    fi
-
-    read -r -p "Continue? [y/N] " response
-    case "$response" in
-        [yY]|[yY][eE][sS])
-            return 0
-            ;;
-        *)
-            echo "Cancelled."
-            exit 1
-            ;;
-    esac
-}
-
-backup_module() {
-    local package="$1"
-    local package_dir="$DOTFILES_DIR/$package"
-
-    if [ -d "$package_dir" ]; then
-        find "$package_dir" -type f | while IFS= read -r file; do
-            local target="${file/#$package_dir/$HOME}"
-            backup_config "$file" "$target"
-        done
-    else
-        echo -e "${RED}Stow package $package does not exist, skipping backup${NC}"
-    fi
-}
-
-backup_all_configs() {
-    local package
-
-    if [ "${#BACKUP_TARGETS[@]}" -eq 0 ]; then
-        echo -e "${GREEN}No conflicting config files found${NC}"
-        return 0
-    fi
-
-    echo -e "${BLUE}Backing up conflicting config files...${NC}"
-    for package in "${TARGET_STOW_MODULES[@]}"; do
-        backup_module "$package"
-    done
-}
-
-# Link files using stow
-stow_link() {
-    local package="$1"
-    echo -e "${BLUE}Stowing package $package...${NC}"
-
-    local package_dir="$DOTFILES_DIR/$package"
-
-    if [ -d "$package_dir" ]; then
-        run_quiet stow --no-folding -d "$DOTFILES_DIR" -R -t "$HOME" "$package"
-    else
-        echo -e "${RED}Stow package $package does not exist, skipping${NC}"
-    fi
+transaction() {
+    local action="$1"
+    local args=("$action" --repo "$DOTFILES_DIR" --home "$HOME")
+    "$DRY_RUN" && args+=(--dry-run)
+    "$ASSUME_YES" && args+=(--yes)
+    if [ "$action" = restore ]; then args+=(--batch "$RESTORE_BATCH"); fi
+    python3 "$SCRIPT_DIR/lib/transaction.py" "${args[@]}" -- "${TARGET_STOW_MODULES[@]}"
 }
 
 # Install dependencies or plugins (customize as needed)
-install_dependencies_or_plugins() {
-    echo -e "${BLUE}Installing packages...${NC}"
-
+install_dependencies_or_plugins() (
+    local repo dir env_name dependency_lock_fd
+    if ! "$DRY_RUN"; then
+        [ ! -L "$DOTFILES_DIR/.dotfiles-dependencies.lock" ] || die "Dependency operation lock cannot be a symlink"
+        exec {dependency_lock_fd}>"$DOTFILES_DIR/.dotfiles-dependencies.lock"
+        flock -x "$dependency_lock_fd"
+    fi
+    validate_git_lock
     install_apt_package_groups
-
-    # diff-so-fancy download + symlink
-    install_git_dependency "https://github.com/so-fancy/diff-so-fancy.git" "$HOME/.local/share/diff-so-fancy" DIFF_SO_FANCY_VERSION
-    if [ ! -d "$HOME/.local/bin" ]; then
-        run_quiet mkdir -p "$HOME/.local/bin"
-    fi
-    run_quiet ln -sf "$HOME/.local/share/diff-so-fancy/diff-so-fancy" "$HOME/.local/bin/diff-so-fancy"
-
-    # oh-my-zsh
-    install_oh_my_zsh
-
-    # neovim
-    install_neovim_plugins
-
-    # tmux
-    install_tmux_plugins
-}
-
-# Link modules (customize as needed)
-link_module(){
-    echo -e "${BLUE}Linking modules...${NC}"
-
-    local package
-
-    for package in "${TARGET_STOW_MODULES[@]}"; do
-        stow_link "$package"
-    done
-}
-
-verify_command() {
-    local label="$1"
-    shift
-
-    echo -e "${BLUE}Verifying $label...${NC}"
-    "$@"
-}
-
-verify_optional_command() {
-    local command_name="$1"
-    local label="$2"
-    shift 2
-
-    if command -v "$command_name" >/dev/null 2>&1; then
-        verify_command "$label" "$@"
-    else
-        warn "Skipping $label: $command_name is not installed"
-    fi
-}
-
-verify_repo() {
-    local nvim_verify_home
-
-    verify_command "Bash syntax" bash -n "${SCRIPT_CHECKS[@]}"
-    verify_optional_command zsh "Zsh syntax" zsh -n zsh/.zshrc zsh/.config/zsh/setopt.zsh
-    verify_optional_command stow "Stow dry-run" stow -n --no-folding -d "$DOTFILES_DIR" -R -t "$HOME" bash zsh common git tmux nvim
-    if command -v nvim >/dev/null 2>&1; then
-        nvim_verify_home="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-nvim-verify.XXXXXX")"
-        if verify_command "Neovim headless startup" env \
-            DOTFILES_VERIFY=1 \
-            XDG_STATE_HOME="$nvim_verify_home/state" \
-            XDG_CACHE_HOME="$nvim_verify_home/cache" \
-            NVIM_LOG_FILE="$nvim_verify_home/nvim.log" \
-            nvim --headless --clean -u "$DOTFILES_DIR/nvim/.config/nvim/init.lua" +qa; then
-            rm -rf "$nvim_verify_home"
-        else
-            rm -rf "$nvim_verify_home"
-            return 1
+    while IFS=$'\t' read -r repo dir env_name; do
+        install_git_dependency "$repo" "$dir" "$env_name"
+    done < <(git_dependencies)
+    local fancy="$HOME/.local/bin/diff-so-fancy"
+    if [ -e "$fancy" ] || [ -L "$fancy" ]; then
+        if [ ! -L "$fancy" ] || [ "$(readlink -f "$fancy")" != "$HOME/.local/share/diff-so-fancy/diff-so-fancy" ]; then
+            die "Resolve conflicting executable manually: $fancy"
         fi
     else
-        warn "Skipping Neovim headless startup: nvim is not installed"
+        run mkdir -p "$HOME/.local/bin"
+        run ln -s "$HOME/.local/share/diff-so-fancy/diff-so-fancy" "$fancy"
     fi
-    verify_optional_command shellcheck "ShellCheck" shellcheck "${SCRIPT_CHECKS[@]}"
-    echo -e "${GREEN}Verification completed.${NC}"
-}
+    install_neovim_plugins
+)
+
+# shellcheck source=lib/verify.sh
+source "$SCRIPT_DIR/lib/verify.sh"
 
 # Main entry point
 main() {
@@ -860,35 +561,14 @@ main() {
 
     case "$MODE" in
         full)
-            collect_all_backup_targets
-            confirm_stow_conflicts
-            confirm_backup_targets
+            transaction check
             install_dependencies_or_plugins
-            backup_all_configs
-            link_module
+            transaction link
             ;;
-        install)
-            install_dependencies_or_plugins
-            ;;
-        backup)
-            collect_all_backup_targets
-            confirm_stow_conflicts
-            confirm_backup_targets
-            backup_all_configs
-            ;;
-        link)
-            collect_all_backup_targets
-            confirm_stow_conflicts
-            confirm_backup_targets
-            backup_all_configs
-            link_module
-            ;;
-        verify)
-            verify_repo
-            ;;
-        lock)
-            write_git_lock
-            ;;
+        install) install_dependencies_or_plugins ;;
+        backup|link|restore) transaction "$MODE" ;;
+        verify) verify_repo ;;
+        lock) write_git_lock ;;
     esac
 
     if [ -n "$SELECTED_MODULE" ]; then
@@ -898,4 +578,4 @@ main() {
     fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then main "$@"; fi

@@ -4,9 +4,7 @@ ZSH_THEME="af-magic"
 # Case-sensitive completion.
 CASE_SENSITIVE="true"
 
-# Initialize completion system
-autoload -Uz compinit
-compinit
+# Oh My Zsh initializes completion when available.
 
 # Disable auto-setting terminal title.
 DISABLE_AUTO_TITLE="true"
@@ -35,9 +33,12 @@ plugins=(
 [ -f ~/.config/common/.exports ] && source ~/.config/common/.exports
 
 # Oh My Zsh.
+zstyle ':omz:update' mode disabled
 if [ -n "${ZSH:-}" ] && [ -r "$ZSH/oh-my-zsh.sh" ]; then
     source "$ZSH/oh-my-zsh.sh"
 else
+    autoload -Uz compinit
+    compinit
     print -u2 "Oh My Zsh not found. Run ./dotfiles.sh install to install it."
 fi
 
@@ -81,6 +82,3 @@ zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
 # Enable completion cache
 zstyle ':completion:*' use-cache yes
 zstyle ':completion:*' cache-path ~/.cache/zsh
-
-# Disable bi-weekly auto-update checks.
-zstyle ':omz:update' mode disabled

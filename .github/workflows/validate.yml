@@ -1,0 +1,37 @@
+name: Validate dotfiles
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prepare system tools and Neovim 0.10.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y stow zsh shellcheck python3 git ripgrep nodejs npm unzip
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 3 -o nvim-linux-x86_64.tar.gz https://github.com/neovim/neovim/releases/download/v0.10.4/nvim-linux-x86_64.tar.gz
+          echo '95aaa8e89473f5421114f2787c13ae0ec6e11ebbd1a13a1bd6fcf63420f8073f  nvim-linux-x86_64.tar.gz' | sha256sum --check --strict
+          tar xzf nvim-linux-x86_64.tar.gz
+          sudo ln -sf "$RUNNER_TEMP/nvim-linux-x86_64/bin/nvim" /usr/bin/nvim
+          nvim --version
+      - name: Prepare pinned lazy.nvim (network allowed only in preparation)
+        run: bash tests/prepare-lazy.sh "$RUNNER_TEMP/lazy-seed"
+      - name: Static and offline regression checks
+        run: |
+          bash dotfiles.sh verify --static
+          bash tests/run.sh
+          git diff --check
+      - name: Real editor integration with local remotes
+        env:
+          DOTFILES_LAZY_SEED: ${{ runner.temp }}/lazy-seed
+        run: bash tests/integration.sh

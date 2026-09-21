@@ -26,6 +26,7 @@ Options:
     -n, --dry-run
               Print commands without running them
     -y, --yes Skip confirmation prompts
+    --nvim    Update Neovim plugins and publish their checked lock
     -a        Update all packages, with one confirmation
 EOF
 }
@@ -44,7 +45,7 @@ confirm() {
     local message="$1"
     local response
 
-    "$assume_yes" && return 0
+    if "$assume_yes" || "$dry_run"; then return 0; fi
     read -r -p "$message [y/N] " response
     case "$response" in
         [yY]|[yY][eE][sS])
@@ -114,9 +115,10 @@ update_gem() {
 }
 
 update_vim() {
-    require_command nvim || return 0
-    echo -e "$magenta\n Updating Neovim Plugins... \n$white"
-    run nvim --headless "+Lazy! sync" +qa
+    local repo args=()
+    repo="${DOTFILES_DIR:-$(dirname "$(dirname "$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")")")}"
+    "$dry_run" && args+=(--dry-run)
+    python3 "$repo/lib/update-dependencies.py" nvim --repo "$repo" "${args[@]}"
 }
 
 update_one_by_one() {
@@ -138,7 +140,7 @@ update_one_by_one() {
 }
 
 main() {
-    local update_all=false
+    local update_all=false editor_only=false
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -151,6 +153,9 @@ main() {
                 ;;
             -y|--yes)
                 assume_yes=true
+                ;;
+            --nvim)
+                editor_only=true
                 ;;
             -a)
                 update_all=true
@@ -167,6 +172,12 @@ main() {
         echo -e "$red\n Executing in dry-run mode. \n$white"
     fi
 
+    if "$editor_only"; then
+        if "$update_all"; then echo '--nvim cannot be combined with -a' >&2; return 1; fi
+        confirm "Update Neovim plugins?" || return 0
+        update_vim
+        return
+    fi
     if "$update_all"; then
         confirm "Run all update groups?" || return 0
         update_apt
@@ -180,4 +191,4 @@ main() {
     fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then main "$@"; fi

@@ -1,11 +1,4 @@
-# Search hidden files and directories.
---hidden
-
-# Follow symbolic links.
---follow
-
-# Don't respect ignore files (.gitignore, .ignore, etc.).
---no-ignore
+# Respect ignore files, hidden paths, and symlinks by default. Use rgdeep to opt in.
 
 # Exclude directories.
 --glob=!{.git,.svn,node_modules,tealdeer,Trash,vendor}

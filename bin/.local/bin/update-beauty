@@ -8,7 +8,6 @@ white='\e[0;37m'
 source_dir="$HOME/.local/src"
 dry_run=false
 assume_yes=false
-update_all=false
 allow_git_clean=false
 install_system=false
 selected_commands=()
@@ -65,6 +64,7 @@ component_to_command() {
 
 # Tools.
 parse_args() {
+    local selected
     while [ "$#" -gt 0 ]; do
         case "$1" in
             -h|--help)
@@ -84,10 +84,11 @@ parse_args() {
                 install_system=true
                 ;;
             -a)
-                update_all=true
+                : # All components are offered by default.
                 ;;
             *)
-                selected_commands+=("$(component_to_command "$1")")
+                selected=$(component_to_command "$1") || return 1
+                selected_commands+=("$selected")
                 ;;
         esac
         shift
@@ -152,7 +153,7 @@ confirm_install() {
 
 confirm_git_clean() {
     echo -e "$magenta\n Files that would be removed by git clean: \n$white"
-    run git clean -fdn
+    run git clean -fdn || return 1
 
     if ! "$allow_git_clean"; then
         echo -e "${red}[!] Skipping git clean. Pass --clean to allow removing untracked files.${white}"
@@ -161,7 +162,7 @@ confirm_git_clean() {
 
     "$dry_run" && return 0
     confirm "Remove these untracked files?" || return 1
-    run git clean -fd
+    run git clean -fd || return 1
 }
 
 row() {
@@ -170,18 +171,25 @@ row() {
     seq -s '─' 0 "$cols" | tr -d '[:digit:]'
 }
 
-# Get latest release.
+# Read the release once, with a tag fallback. Dry-run never contacts GitHub.
 get_latest_release() {
-    local regex_to_remove_url='sed -re ''s#(http://|https://|git@|git://)github.com(/|:)##'' -e ''s#(/|.git)$##'''
-    local username_and_repo
-    username_and_repo=$(git config --get remote.origin.url | $regex_to_remove_url)
-    check_latest_release() {
-        curl -fsS "https://api.github.com/repos/$username_and_repo/releases/latest" | awk -F '"' '/tag_name/{print $4}'
-    }
-    if [ -n "$(check_latest_release)" ]; then
-        check_latest_release
+    local repo release
+    if "$dry_run"; then
+        printf '%s\n' origin/HEAD
+        return 0
+    fi
+    repo=$(git remote get-url origin) || return 1
+    case "$repo" in
+        https://github.com/*) repo=${repo#https://github.com/} ;;
+        git@github.com:*) repo=${repo#git@github.com:} ;;
+        *) echo "Expected a GitHub origin: $repo" >&2; return 1 ;;
+    esac
+    repo=${repo%.git}
+    if release=$(curl --max-time 30 -fsS "https://api.github.com/repos/$repo/releases/latest"); then
+        printf '%s' "$release" | jq -er '.tag_name'
     else
-        curl -fsS "https://api.github.com/repos/$username_and_repo/tags" | jq -r '.[] | select(.name|test("^(|v)[0-9]")) | .name' | head -n 1
+        curl --max-time 30 -fsS "https://api.github.com/repos/$repo/tags" |
+            jq -er '[.[] | .name | select(test("^v?[0-9]"))][0] // empty'
     fi
 }
 
@@ -193,17 +201,17 @@ use_latest_release() {
     if [ -n "$DOTFILES_UPDATE_BEAUTY_REF" ]; then
         confirm_git_clean || return 1
         run git fetch --tags --prune origin || return 1
-        run git checkout "$DOTFILES_UPDATE_BEAUTY_REF"
-        run git rev-parse --short HEAD
+        run git checkout "$DOTFILES_UPDATE_BEAUTY_REF" || return 1
+        run git rev-parse --short HEAD || return 1
         return 0
     fi
 
-    get_version=$(get_latest_release)
+    get_version=$(get_latest_release) || return 1
     if [ -n "$get_version" ]; then
         confirm_git_clean || return 1
         run git fetch origin tag "$get_version" --no-tags || return 1
-        run git checkout "$get_version"
-        run git rev-parse --short HEAD
+        run git checkout "$get_version" || return 1
+        run git rev-parse --short HEAD || return 1
     else
         echo -e "${red}[!] Error: There is an internet connection issue.${white}"
         return 1
@@ -212,46 +220,42 @@ use_latest_release() {
 
 # Installer.
 update_oh-my-zsh() {
-    echo -e "$magenta\n Updating oh-my-zsh... \n$white"
-    run zsh "$HOME/.oh-my-zsh/tools/upgrade.sh"
-    echo -e "$magenta\n Updating zsh plugins... \n$white"
-    cd "$HOME/.oh-my-zsh/custom/plugins" || return
-    while IFS= read -r plugin_dir; do
-        echo "$plugin_dir"
-        run git -C "$plugin_dir" pull
-    done < <(find . -mindepth 1 -maxdepth 1 -type d -print)
+    local repo args=()
+    repo="${DOTFILES_DIR:-$(dirname "$(dirname "$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")")")}"
+    "$dry_run" && args+=(--dry-run)
+    python3 "$repo/lib/update-dependencies.py" zsh --repo "$repo" "${args[@]}"
 }
 
 update_i3() {
     echo -e "$magenta\n Updating & compiling i3... \n$white"
     cd "$source_dir/i3" || return
-    run rm -rf build
     use_latest_release || return 1
-    run mkdir build
-    run meson --buildtype=release . build
-    run ninja -C build
+    run rm -rf -- build || return 1
+    run mkdir build || return 1
+    run meson --buildtype=release . build || return 1
+    run ninja -C build || return 1
     echo -e "$green\n Previous i3 version: \n$white"
     row
-    i3 -v
+    i3 -v 2>/dev/null || true
     row
     echo -e "$magenta\n Installing i3... \n$white"
     confirm_install "i3" || return 0
-    run sudo install -Dm755 --verbose build/i3 /usr/bin/i3
-    run sudo install -Dm755 --verbose build/i3bar /usr/bin/i3bar
-    run sudo install -Dm755 --verbose build/i3-config-wizard /usr/bin/i3-config-wizard
-    run sudo install -Dm755 --verbose build/i3-dump-log /usr/bin/i3-dump-log
-    run sudo install -Dm755 --verbose build/i3-input /usr/bin/i3-input
-    run sudo install -Dm755 --verbose build/i3-msg /usr/bin/i3-msg
-    run sudo install -Dm755 --verbose build/i3-nagbar /usr/bin/i3-nagbar
-    run sudo install -Dm755 --verbose i3-dmenu-desktop /usr/bin/i3-dmenu-desktop
-    run sudo install -Dm755 --verbose i3-migrate-config-to-v4 /usr/bin/i3-migrate-config-to-v4
-    run sudo install -Dm755 --verbose i3-save-tree /usr/bin/i3-save-tree
-    run sudo install -Dm755 --verbose i3-sensible-editor /usr/bin/i3-sensible-editor
-    run sudo install -Dm755 --verbose i3-sensible-pager /usr/bin/i3-sensible-pager
-    run sudo install -Dm755 --verbose i3-sensible-terminal /usr/bin/i3-sensible-terminal
+    run sudo install -Dm755 --verbose build/i3 /usr/bin/i3 || return 1
+    run sudo install -Dm755 --verbose build/i3bar /usr/bin/i3bar || return 1
+    run sudo install -Dm755 --verbose build/i3-config-wizard /usr/bin/i3-config-wizard || return 1
+    run sudo install -Dm755 --verbose build/i3-dump-log /usr/bin/i3-dump-log || return 1
+    run sudo install -Dm755 --verbose build/i3-input /usr/bin/i3-input || return 1
+    run sudo install -Dm755 --verbose build/i3-msg /usr/bin/i3-msg || return 1
+    run sudo install -Dm755 --verbose build/i3-nagbar /usr/bin/i3-nagbar || return 1
+    run sudo install -Dm755 --verbose i3-dmenu-desktop /usr/bin/i3-dmenu-desktop || return 1
+    run sudo install -Dm755 --verbose i3-migrate-config-to-v4 /usr/bin/i3-migrate-config-to-v4 || return 1
+    run sudo install -Dm755 --verbose i3-save-tree /usr/bin/i3-save-tree || return 1
+    run sudo install -Dm755 --verbose i3-sensible-editor /usr/bin/i3-sensible-editor || return 1
+    run sudo install -Dm755 --verbose i3-sensible-pager /usr/bin/i3-sensible-pager || return 1
+    run sudo install -Dm755 --verbose i3-sensible-terminal /usr/bin/i3-sensible-terminal || return 1
     echo -e "$green\n Current i3 version: \n$white"
     row
-    i3 -v
+    i3 -v 2>/dev/null || true
     row
 }
 
@@ -259,172 +263,173 @@ update_i3blocks() {
     echo -e "$magenta\n Updating & compiling i3blocks... \n$white"
     cd "$source_dir/i3blocks" || return
     use_latest_release || return 1
-    run autoreconf -fi
-    run ./configure
-    run make
+    run autoreconf -fi || return 1
+    run ./configure || return 1
+    run make || return 1
     echo -e "$green\n Previous i3blocks version: \n$white"
     row
-    i3blocks -V
+    i3blocks -V 2>/dev/null || true
     row
     echo -e "$magenta\n Installing i3blocks... \n$white"
     confirm_install "i3blocks" || return 0
-    run sudo make install
+    run sudo make install || return 1
     echo -e "$green\n Current i3blocks version: \n$white"
     row
-    i3blocks -V
+    i3blocks -V 2>/dev/null || true
     row
     echo -e "$magenta\n Updating i3blocks-contrib... \n$white"
-    cd "$source_dir/i3blocks-contrib" || return
-    run git pull
+    enter_source_repo "$source_dir/i3blocks-contrib" || return 1
+    run git pull --ff-only || return 1
 }
 
 update_i3lock() {
     echo -e "$magenta\n Updating & compiling i3lock... \n$white"
     cd "$source_dir/i3lock-color" || return
-    run rm -rf build
     use_latest_release || return 1
-    run autoreconf -i
-    run mkdir build
-    cd build || return
-    run ../configure --enable-debug=no --disable-sanitizers
-    run make
+    run rm -rf -- build || return 1
+    run autoreconf -i || return 1
+    run mkdir build || return 1
+    if ! "$dry_run"; then cd build || return 1; fi
+    run ../configure --enable-debug=no --disable-sanitizers || return 1
+    run make || return 1
     echo -e "$green\n Previous i3lock version: \n$white"
     row
-    i3lock -v
+    i3lock -v 2>/dev/null || true
     row
     echo -e "$magenta\n Installing i3lock... \n$white"
     confirm_install "i3lock" || return 0
-    run sudo make install
+    run sudo make install || return 1
     echo -e "$green\n Current i3lock version: \n$white"
     row
-    i3lock -v
+    i3lock -v 2>/dev/null || true
     row
     echo -e "$magenta\n Updating i3lock-fancy... \n$white"
-    cd "$source_dir/i3lock-fancy" || return
-    run git pull
+    enter_source_repo "$source_dir/i3lock-fancy" || return 1
+    run git pull --ff-only || return 1
     confirm_install "i3lock-fancy" || return 0
-    run sudo make install
+    run sudo make install || return 1
 }
 
 update_rofi() {
     echo -e "$magenta\n Updating & compiling rofi... \n$white"
     cd "$source_dir/rofi" || return
-    run rm -rf build
     use_latest_release || return 1
-    run git submodule update --init
-    run mkdir build
-    run meson --buildtype=release . build
-    run ninja -C build
+    run rm -rf -- build || return 1
+    run git submodule update --init || return 1
+    run mkdir build || return 1
+    run meson --buildtype=release . build || return 1
+    run ninja -C build || return 1
     echo -e "$green\n Previous rofi version: \n$white"
     row
-    rofi -v
+    rofi -v 2>/dev/null || true
     row
     echo -e "$magenta\n Installing rofi... \n$white"
     confirm_install "rofi" || return 0
-    run sudo install -Dm755 --verbose build/rofi /usr/local/bin/rofi
+    run sudo install -Dm755 --verbose build/rofi /usr/local/bin/rofi || return 1
     echo -e "$green\n Current rofi version: \n$white"
     row
-    rofi -v
+    rofi -v 2>/dev/null || true
     row
 }
 
 update_dunst() {
     echo -e "$magenta\n Updating & compiling dunst... \n$white"
     cd "$source_dir/dunst" || return
-    run make clean
     use_latest_release || return 1
-    run make WAYLAND=0
-    run make dunstify
+    run make clean || return 1
+    run make WAYLAND=0 || return 1
+    run make dunstify || return 1
     echo -e "$green\n Previous dunst version: \n$white"
     row
-    dunst -v
+    dunst -v 2>/dev/null || true
     row
     echo -e "$magenta\n Installing dunst... \n$white"
     confirm_install "dunst" || return 0
-    run sudo make install
+    run sudo make install || return 1
     echo -e "$green\n Current dunst version: \n$white"
     row
-    dunst -v
+    dunst -v 2>/dev/null || true
     row
 }
 
 update_picom() {
     echo -e "$magenta\n Updating & compiling picom... \n$white"
     cd "$source_dir/picom" || return
-    run rm -rf build
     use_latest_release || return 1
-    run git submodule update --init
-    run meson --buildtype=release . build -Dwith_docs=false
-    run ninja -C build
+    run rm -rf -- build || return 1
+    run git submodule update --init || return 1
+    run meson --buildtype=release . build -Dwith_docs=false || return 1
+    run ninja -C build || return 1
     echo -e "$green\n Previous picom version: \n$white"
     row
-    picom --version
+    picom --version 2>/dev/null || true
     row
     echo -e "$magenta\n Installing picom... \n$white"
     confirm_install "picom" || return 0
-    run sudo install -Dm755 --verbose build/src/picom /usr/local/bin/picom
+    run sudo install -Dm755 --verbose build/src/picom /usr/local/bin/picom || return 1
     echo -e "$green\n Current picom version: \n$white"
     row
-    picom --version
+    picom --version 2>/dev/null || true
     row
 }
 
-update_one_by_one() {
-    local update_command
-    local response
-
-    for update_command in "${update_commands[@]}"; do
-        echo
-        read -r -p "Do you want to ${update_command//_/ }? [y/n] " response
-        case $response in
-            [yY][eE][sS]|[yY])
-                if ! $update_command; then
-                    echo -e "${red}[!] ${update_command} failed or was skipped.${white}"
-                fi
-                ;;
-            *)
-                echo "Cancelled."
-                ;;
-        esac
-    done
+enter_source_repo() {
+    [ -e "$1/.git" ] || { echo "Not a source repository: $1" >&2; return 1; }
+    cd -- "$1" || return 1
+    [ "$(git rev-parse --show-toplevel)" = "$(pwd -P)" ] || return 1
+    [ -z "$(git status --porcelain --untracked-files=no)" ] || {
+        echo "Tracked changes in $1" >&2
+        return 1
+    }
 }
 
-update_all_packages() {
-    local update_command
-
-    for update_command in "${update_commands[@]}"; do
-        if "$assume_yes" || confirm "Run ${update_command//_/ }?"; then
-            if ! $update_command; then
-                echo -e "${red}[!] ${update_command} failed or was skipped.${white}"
-            fi
-        fi
-    done
-}
-
-update_selected_packages() {
-    local update_command
-
-    for update_command in "${selected_commands[@]}"; do
-        if ! $update_command; then
-            echo -e "${red}[!] ${update_command} failed or was skipped.${white}"
-        fi
-    done
+# Validate all tools before deleting a build directory or changing a checkout.
+preflight_component() {
+    local component="${1#update_}" tool directory
+    local required=(git)
+    case "$component" in
+        oh-my-zsh) directory="$HOME/.oh-my-zsh" ;;
+        i3|rofi|picom) directory="$source_dir/$component"; required+=(meson ninja cc pkg-config) ;;
+        i3blocks) directory="$source_dir/i3blocks"; required+=(autoreconf make cc pkg-config) ;;
+        i3lock) directory="$source_dir/i3lock-color"; required+=(autoreconf make cc pkg-config) ;;
+        dunst) directory="$source_dir/dunst"; required+=(make cc pkg-config) ;;
+    esac
+    for tool in "${required[@]}"; do require_command "$tool" || return 1; done
+    if [ "$component" != oh-my-zsh ]; then preflight_source_repo || return 1; fi
+    if "$install_system"; then require_command sudo || return 1; fi
+    if [ ! -d "$directory" ] ||
+        [ "$(git -C "$directory" rev-parse --show-toplevel)" != "$(realpath "$directory")" ]; then
+        echo "Not a source repository: $directory" >&2
+        return 1
+    fi
+    [ -z "$(git -C "$directory" status --porcelain --untracked-files=no)" ] || {
+        echo "Tracked changes in $directory; refusing to update." >&2
+        return 1
+    }
 }
 
 main() {
-    parse_args "$@"
-
-    if "$dry_run"; then
-        echo -e "$red\n Executing in dry-run mode. \n$white"
+    local update_command failed=0
+    parse_args "$@" || return 1
+    "$dry_run" && echo "Executing in dry-run mode."
+    if [ "${#selected_commands[@]}" -eq 0 ]; then
+        for update_command in "${update_commands[@]}"; do
+            if "$assume_yes" || "$dry_run" || confirm "Run ${update_command//_/ }?"; then
+                selected_commands+=("$update_command")
+            else
+                echo "Skipped: $update_command"
+            fi
+        done
     fi
-
-    if [ "${#selected_commands[@]}" -gt 0 ]; then
-        update_selected_packages
-    elif "$update_all"; then
-        update_all_packages
-    else
-        update_one_by_one
-    fi
+    for update_command in "${selected_commands[@]}"; do
+        if (preflight_component "$update_command" && "$update_command"); then
+            echo "Completed: $update_command"
+        else
+            echo "Failed: $update_command" >&2
+            failed=1
+        fi
+    done
+    return "$failed"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then main "$@"; fi

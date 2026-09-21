@@ -84,7 +84,22 @@ alias help='man'
 alias quit='exit'
 
 # Stow
-alias stow='stow -d "$HOME/.dotfiles"'
+# Resolve the repository through the linked shared config, including paths with spaces.
+unalias stow 2>/dev/null || true
+stow() {
+    local repo="${DOTFILES_DIR:-}"
+    local config
+    if [ -z "$repo" ]; then
+        config=$(readlink -f "$HOME/.config/common/.aliases") || return 1
+        repo="${config%/common/.config/common/.aliases}"
+        [ "$repo" != "$config" ] && [ -f "$repo/dotfiles.sh" ] || {
+            printf '%s\n' 'Set DOTFILES_DIR to your dotfiles repository.' >&2
+            return 1
+        }
+    fi
+    command stow -d "$repo" "$@"
+}
+alias rgdeep='rg --hidden --follow --no-ignore'
 
 # .aliases.local
 [ -f ~/.config/common/.aliases.local ] && source ~/.config/common/.aliases.local

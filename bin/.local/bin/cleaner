@@ -9,7 +9,6 @@ assume_yes=false
 broad_clean=false
 dangerous=false
 
-shopt -s extglob
 
 # Since some programs are installed in non-root directories,
 # don't run this script as root to avoid permission conflict.
@@ -168,7 +167,24 @@ clean_history() {
 
 clean_cache() {
     echo -e "$magenta\n Cleaning Cache... \n$white"
-    run rm -rfv ~/.cache/!(chromium|composer|fontconfig|mozilla|pnpm|thumbnails|thunderbird)
+    local cache_root="${XDG_CACHE_HOME:-$HOME/.cache}"
+    local name target
+    # Never traverse a symlinked cache root or an allowlisted symlink.
+    if [[ "$cache_root" != /* || "$cache_root" = / || -L "$cache_root" ]]; then
+        echo "Unsafe cache root: $cache_root" >&2
+        return 1
+    fi
+    [ -d "$cache_root" ] || return 0
+    [ "$(realpath -s "$cache_root")" = "$(realpath "$cache_root")" ] || {
+        echo "Skipping cache root with symlinked ancestors: $cache_root" >&2
+        return 1
+    }
+    for name in nvim zsh fzf; do
+        target="$cache_root/$name"
+        if [ -d "$target" ] && [ ! -L "$target" ]; then
+            run rm -rfv -- "$target"
+        fi
+    done
 }
 
 clean_junk() {

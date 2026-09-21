@@ -11,8 +11,7 @@ export PATH="$PATH"
 export LANG=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
 
-# Term.
-export TERM="xterm-256color"
+# TERM is inherited from the terminal, SSH, or tmux.
 
 # Default Editor.
 #export EDITOR="subl"
@@ -21,7 +20,7 @@ export TERM="xterm-256color"
 export PAGER="less"
 
 # Zsh.
-if [ "$(ps -p $$ -ocomm=)" = "zsh" ]; then
+if [ -n "${ZSH_VERSION:-}" ]; then
     # Oh My Zsh.
     export ZSH="$HOME/.oh-my-zsh"
     # Set a character at the end of partial lines to none.
@@ -31,7 +30,7 @@ if [ "$(ps -p $$ -ocomm=)" = "zsh" ]; then
 fi
 
 # Bash.
-if [ "$(ps -p $$ -ocomm=)" = "bash" ]; then
+if [ -n "${BASH_VERSION:-}" ]; then
     # History settings.
     export HISTTIMEFORMAT="%F %T "
     export HISTCONTROL=ignoredups
