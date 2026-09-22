@@ -41,7 +41,7 @@ class DotfilesTests(unittest.TestCase):
     def transaction(self, action, *args, expected=0):
         return self.run_command(['python3', str(ROOT/'lib/transaction.py'), action,
                                 '--repo', str(self.repo), '--home', str(self.home), *args,
-                                '--', 'demo'], expected)
+                                'demo'], expected)
 
     def stub(self, name, body):
         bindir = self.base/'bin'; bindir.mkdir(exist_ok=True)
@@ -162,7 +162,7 @@ main --yes rofi
         (self.repo/'other/.config/demo').mkdir(parents=True)
         (self.repo/'other/.config/demo/settings').write_text('other')
         self.run_command(['python3',str(ROOT/'lib/transaction.py'),'check','--repo',str(self.repo),
-                          '--home',str(self.home),'--','demo','other'],1)
+                          '--home',str(self.home),'demo','other'],1)
 
     def test_static_verify_from_other_cwd(self):
         self.run_command(['bash',str(ROOT/'dotfiles.sh'),'verify','--static'])
@@ -272,7 +272,7 @@ from pathlib import Path
 from unittest.mock import patch
 spec = importlib.util.spec_from_file_location("transaction", sys.argv[1])
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-sys.argv = [sys.argv[1], "link", "--repo", sys.argv[2], "--home", sys.argv[3], "--yes", "--", "demo"]
+sys.argv = [sys.argv[1], "link", "--repo", sys.argv[2], "--home", sys.argv[3], "--yes", "demo"]
 original = Path.rename
 count = 0
 def rename(path, target):
@@ -293,7 +293,7 @@ with patch.object(Path, "rename", rename):
         with (root/'.lock').open('w') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX)
             command=['python3',str(ROOT/'lib/transaction.py'),'link','--repo',str(self.repo),
-                     '--home',str(self.home),'--yes','--','demo']
+                     '--home',str(self.home),'--yes','demo']
             process=subprocess.Popen(command,env=self.env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
             try:
                 time.sleep(0.15)

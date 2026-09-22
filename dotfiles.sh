@@ -517,7 +517,7 @@ transaction() {
     "$DRY_RUN" && args+=(--dry-run)
     "$ASSUME_YES" && args+=(--yes)
     if [ "$action" = restore ]; then args+=(--batch "$RESTORE_BATCH"); fi
-    python3 "$SCRIPT_DIR/lib/transaction.py" "${args[@]}" -- "${TARGET_STOW_MODULES[@]}"
+    python3 "$SCRIPT_DIR/lib/transaction.py" "${args[@]}" "${TARGET_STOW_MODULES[@]}"
 }
 
 # Install dependencies or plugins (customize as needed)

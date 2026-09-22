@@ -34,7 +34,7 @@ PY
     validate_git_lock || failed=1
     python3 "$SCRIPT_DIR/lib/check-lock.py" "$LOCK_FILE" "$DOTFILES_DIR/nvim/.config/nvim/lazy-lock.json" || failed=1
     mkdir -p "$temp/home"
-    python3 "$SCRIPT_DIR/lib/transaction.py" check --repo "$DOTFILES_DIR" --home "$temp/home" -- "${STOW_MODULES[@]}" >/dev/null || failed=1
+    python3 "$SCRIPT_DIR/lib/transaction.py" check --repo "$DOTFILES_DIR" --home "$temp/home" "${STOW_MODULES[@]}" >/dev/null || failed=1
     HOME="$temp/home" stow -n --no-folding "--ignore=$(cat "$SCRIPT_DIR/lib/stow-private-pattern")" \
         -d "$DOTFILES_DIR" -S -t "$temp/home" "${STOW_MODULES[@]}" || failed=1
     # Report actual conflicts separately; repository validation doesn't move user files.
