@@ -51,4 +51,14 @@ return {
         "nvim-treesitter/nvim-treesitter", event = { "BufReadPost", "BufNewFile" },
         build = ":TSUpdateSync", config = configure("treesitter"),
     },
+    {
+        "MeanderingProgrammer/render-markdown.nvim",
+        ft = { "markdown" },
+        cmd = { "RenderMarkdown" },
+        dependencies = {
+            "nvim-treesitter/nvim-treesitter",
+            "nvim-tree/nvim-web-devicons",
+        },
+        opts = {},
+    },
 }
