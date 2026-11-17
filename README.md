@@ -40,6 +40,7 @@ Oh My Zsh，不修改登录 Shell，也不重复执行其官方安装器。
 ```sh
 DOTFILES_APT_GROUPS="base desktop" ./dotfiles.sh install
 DOTFILES_APT_GROUPS="base server" ./dotfiles.sh install
+DOTFILES_APT_GROUPS="base kubernetes" ./dotfiles.sh install
 ```
 
 | 组 | 主要内容 |
@@ -48,6 +49,35 @@ DOTFILES_APT_GROUPS="base server" ./dotfiles.sh install
 | `desktop` | Alacritty、字体 |
 | `server` | openssh-server |
 | `optional` | autojump、glow、yt-dlp、traceroute 等 |
+| `kubernetes` | kubectl、kubectx/kubens、Helm、Bash 补全 |
+
+`kubernetes` 组按需安装。Helm 使用已配置的 apt 源及其当前候选版本；如果没有
+候选包，安装会在修改系统前提示先配置 Helm 源并刷新 apt 索引。当前 Debian 13 的
+kubectl 候选版本为 1.32.3，适用于 Kubernetes 1.31–1.33 控制面；集群升级后
+应重新检查客户端版本。Helm 没有固定主版本，跨主版本升级前请检查使用的脚本和插件。
+
+### Kubernetes 环境
+
+每个环境有独立的本机 kubeconfig，不纳入仓库：
+
+```text
+~/.kube/config/
+├── personal/config
+├── raco/config
+└── <新环境名>/config
+```
+
+新 Bash/Zsh 终端默认使用 `personal`。将可信的 kubeconfig 放入对应目录后，
+使用 `kube-list` 查看可用环境，用 `kube-use raco` 或 `kube-use personal` 在
+**当前 shell** 中切换；`kube-current` 显示当前文件和 context。新增环境只需增加
+`~/.kube/config/<环境名>/config`，无需修改仓库。环境名可使用字母、数字、
+`.`、`_`、`-`，但不能以 `.` 开头；目录和文件建议分别设为 `700` 和 `600`。
+
+`kubectl`、`kubectx`、`kubens`、Helm 共用当前的 `KUBECONFIG`。在未加载此
+Shell 配置的脚本或程序中需要显式设置该变量，因为 `~/.kube/config` 在这里是目录，
+并非 kubectl 默认读取的配置文件。Zsh 启用 Oh My Zsh 的 `kubectl`、`helm`、
+`kubectx` 插件；Bash 启用 kubectl 和 Helm 命令补全。`h` 在 Zsh 中由 Helm
+插件定义为 `helm`，查看命令历史请使用 `history`。
 
 所有 apt 组先完成校验，缺失软件包去重后只执行一次索引更新和一次安装。
 任何 apt/Git 变更前，检查 PATH 实际选中的 Neovim >= 0.10.4，或缓存中的 apt 候选版本
@@ -216,8 +246,12 @@ compatibility baseline. Run `./dotfiles.sh --dry-run` before installing.
 - `verify`: additionally validate installed Git commits and load all declared Neovim plugins.
 - `lock`: atomically record all installed, correctly sourced, clean Git dependencies.
 
-Only the `base` package group is installed by default. Add `desktop`, `server`, or `optional`
+Only the `base` package group is installed by default. Add `desktop`, `server`, `optional`, or `kubernetes`
 through `DOTFILES_APT_GROUPS`. Base includes jq, bc, Python 3, Node.js/npm and unzip.
+The optional `kubernetes` group installs kubectl, kubectx/kubens, Helm and Bash completion.
+Helm needs an available apt candidate from a configured source. Kubeconfigs are local files at
+`~/.kube/config/<environment>/config`; new shells select `personal`, while `kube-list`,
+`kube-use <environment>` and `kube-current` discover, switch and show environments.
 All apt groups are validated before changes; missing packages are deduplicated into one
 apt update/install. Preflight checks the actual Neovim executable or cached apt candidate
 against 0.10.4 and rejects an older executable shadowing the apt binary. It checks again

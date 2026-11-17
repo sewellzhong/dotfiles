@@ -80,6 +80,12 @@ APT_OPTIONAL_PACKAGES=(
     traceroute
     yt-dlp
 )
+APT_KUBERNETES_PACKAGES=(
+    kubectl
+    kubectx
+    helm
+    bash-completion
+)
 SCRIPT_CHECKS=(
     dotfiles.sh
     bin/.local/bin/update
@@ -356,7 +362,7 @@ update_apt_once() {
 }
 
 install_apt_package_groups() {
-    local group package nvim_package
+    local group package nvim_package helm_candidate kubernetes_selected=false
     local packages=() missing=() version_args=()
     local -A seen=()
     # Resolve every group before issuing any command which changes the system.
@@ -366,9 +372,16 @@ install_apt_package_groups() {
             desktop) packages+=("${APT_DESKTOP_PACKAGES[@]}") ;;
             server) packages+=("${APT_SERVER_PACKAGES[@]}") ;;
             optional) packages+=("${APT_OPTIONAL_PACKAGES[@]}") ;;
+            kubernetes) packages+=("${APT_KUBERNETES_PACKAGES[@]}"); kubernetes_selected=true ;;
             *) die "Unknown apt package group: $group" ;;
         esac
     done
+    if "$kubernetes_selected" && ! is_installed_of_apt helm; then
+        helm_candidate=$(LC_ALL=C apt-cache policy helm | awk '/^[[:space:]]*Candidate:/ {print $2; exit}')
+        if [ -z "$helm_candidate" ] || [ "$helm_candidate" = "(none)" ]; then
+            die "No Helm apt candidate. Configure the Helm apt source and refresh apt indexes before installing the kubernetes group."
+        fi
+    fi
     "$DRY_RUN" && version_args+=(--dry-run)
     nvim_package=$(python3 "$SCRIPT_DIR/lib/apt-preflight.py" "${version_args[@]}") || return 1
     for package in "${packages[@]}" $nvim_package; do

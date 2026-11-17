@@ -35,6 +35,18 @@ if ! shopt -oq posix; then
         fi
 fi
 
+# Kubernetes tools and environment completion.
+if command -v kubectl >/dev/null 2>&1; then
+        source <(kubectl completion bash)
+fi
+if command -v helm >/dev/null 2>&1; then
+        source <(helm completion bash)
+fi
+_kube_use_complete() {
+        mapfile -t COMPREPLY < <(compgen -W "$(kube-list)" -- "${COMP_WORDS[COMP_CWORD]}")
+}
+complete -F _kube_use_complete kube-use
+
 # dircolors.
 if declare -F setup-dircolors >/dev/null 2>&1; then
         setup-dircolors

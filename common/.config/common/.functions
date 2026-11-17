@@ -5,6 +5,56 @@ apt-clean() {
     sudo apt autoremove
 }
 
+# Each environment has one kubeconfig at ~/.kube/config/<name>/config.
+kube-list() {
+    local directory name
+    for directory in "$HOME"/.kube/config/*; do
+        if [ ! -d "$directory" ] || [ ! -r "$directory/config" ] || [ ! -f "$directory/config" ]; then
+            continue
+        fi
+        name=${directory##*/}
+        case "$name" in
+            *[!a-zA-Z0-9._-]*|.*) continue ;;
+        esac
+        printf '%s\n' "$name"
+    done
+}
+
+kube-use() {
+    local name target context
+    if [ "$#" -ne 1 ]; then
+        printf '%s\n' 'Usage: kube-use <environment>' >&2
+        return 2
+    fi
+    name=$1
+    case "$name" in
+        ''|*[!a-zA-Z0-9._-]*|.*)
+            printf 'Invalid Kubernetes environment: %s\n' "$name" >&2
+            return 2
+            ;;
+    esac
+    target="$HOME/.kube/config/$name/config"
+    if [ ! -f "$target" ] || [ ! -r "$target" ]; then
+        printf 'Missing or unreadable kubeconfig: %s\n' "$target" >&2
+        return 1
+    fi
+    if ! command -v kubectl >/dev/null 2>&1; then
+        printf '%s\n' 'kubectl is required to validate a kubeconfig.' >&2
+        return 1
+    fi
+    context=$(command kubectl --kubeconfig "$target" config current-context) || return 1
+    [ -n "$context" ] || return 1
+    export KUBECONFIG="$target"
+    printf 'Kubernetes environment: %s (context: %s)\n' "$name" "$context"
+}
+
+kube-current() {
+    printf 'KUBECONFIG=%s\n' "${KUBECONFIG:-<unset>}"
+    if command -v kubectl >/dev/null 2>&1; then
+        command kubectl config current-context
+    fi
+}
+
 # Create a new directory and enter it
 mkd() {
     mkdir -p "$@" && cd "$@"

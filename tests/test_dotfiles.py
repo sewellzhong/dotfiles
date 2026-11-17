@@ -63,6 +63,107 @@ class DotfilesTests(unittest.TestCase):
         shutil.copytree(ROOT, self.repo, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('.git', '.agents', '.codex', '__pycache__', '.nvimlog'))
 
+    def kubeconfig(self, name, context):
+        directory = self.home/'.kube/config'/name
+        directory.mkdir(parents=True)
+        (directory/'config').write_text(f'apiVersion: v1\nkind: Config\ncurrent-context: {context}\n')
+
+    def stub_kubectl_for_configs(self):
+        self.stub('kubectl', '''if [ "$1" = completion ]; then exit 0; fi
+if [ "$1" = --kubeconfig ]; then file=$2; shift 2; else file=$KUBECONFIG; fi
+if [ "$1" = config ] && [ "$2" = current-context ]; then
+  awk '/^current-context: / { print $2; found=1 } END { if (!found) exit 1 }' "$file"
+  exit $?
+fi
+exit 2''')
+
+    def test_kubernetes_shell_environment_discovery_and_switch(self):
+        self.kubeconfig('personal', 'home-context')
+        self.kubeconfig('raco', 'work-context')
+        self.kubeconfig('later', 'later-context')
+        self.kubeconfig('invalid', '')
+        self.stub_kubectl_for_configs()
+        self.env['TEST_REPO'] = str(ROOT)
+        script = '''source "$TEST_REPO/common/.config/common/.exports"
+source "$TEST_REPO/common/.config/common/.functions"
+printf 'default=%s\\n' "$KUBECONFIG"
+kube-list
+kube-use raco
+printf 'selected=%s\\n' "$KUBECONFIG"
+kube-use later
+if kube-use missing; then exit 20; fi
+if kube-use ../personal; then exit 21; fi
+if kube-use invalid; then exit 22; fi
+printf 'retained=%s\\n' "$KUBECONFIG"
+'''
+        for shell in ('bash', 'zsh'):
+            result = self.run_command([shell, '-c', script])
+            self.assertIn(f'default={self.home}/.kube/config/personal/config', result.stdout)
+            self.assertIn('personal\n', result.stdout)
+            self.assertIn('raco\n', result.stdout)
+            self.assertIn('later\n', result.stdout)
+            self.assertIn(f'selected={self.home}/.kube/config/raco/config', result.stdout)
+            self.assertIn(f'retained={self.home}/.kube/config/later/config', result.stdout)
+
+    def test_kubernetes_bash_completion_discovers_new_environment(self):
+        self.kubeconfig('personal', 'home-context')
+        self.kubeconfig('later', 'later-context')
+        common = self.home/'.config/common'; common.mkdir(parents=True)
+        for name in ('.aliases', '.exports', '.functions'):
+            (common/name).symlink_to(ROOT/'common/.config/common'/name)
+        self.stub_kubectl_for_configs()
+        self.stub('helm', 'exit 0')
+        self.env['TEST_REPO'] = str(ROOT)
+        result = self.run_command(['bash', '-c', '''source "$TEST_REPO/bash/.bashrc"
+COMP_WORDS=(kube-use la); COMP_CWORD=1
+_kube_use_complete
+printf '%s\\n' "${COMPREPLY[@]}"
+'''])
+        self.assertIn('later\n', result.stdout)
+
+    def test_kubernetes_apt_group_and_missing_helm_source(self):
+        self.env['TEST_REPO'] = str(ROOT)
+        script = '''source "$TEST_REPO/dotfiles.sh"
+DOTFILES_APT_GROUPS=kubernetes
+DRY_RUN=true
+is_installed_of_apt() { return 1; }
+python3() { [ "$1" != "$SCRIPT_DIR/lib/apt-preflight.py" ] || printf 'neovim\\n'; }
+install_apt_package_groups
+'''
+        result = self.run_command(['bash', '-c', script])
+        for package in ('kubectl', 'kubectx', 'helm', 'bash-completion'):
+            self.assertIn(package, result.stdout)
+        result = self.run_command(['bash', '-c', '''source "$TEST_REPO/dotfiles.sh"
+DOTFILES_APT_GROUPS=kubernetes
+is_installed_of_apt() { return 1; }
+apt-cache() { printf 'helm:\\n  Candidate: (none)\\n'; }
+install_apt_package_groups
+'''], 1)
+        self.assertIn('No Helm apt candidate', result.stderr)
+
+    def test_helm_zsh_alias_is_not_shadowed_by_shared_aliases(self):
+        self.assertNotIn("alias h='history'", (ROOT/'common/.config/common/.aliases').read_text())
+        zshrc = (ROOT/'zsh/.zshrc').read_text()
+        for plugin in ('kubectl', 'helm', 'kubectx'):
+            self.assertIn(f'    {plugin}\n', zshrc)
+
+    def test_zsh_environment_completion_uses_discovered_directories(self):
+        self.kubeconfig('personal', 'home-context')
+        self.kubeconfig('later', 'later-context')
+        common = self.home/'.config/common'; common.mkdir(parents=True)
+        for name in ('.aliases', '.exports', '.functions'):
+            (common/name).symlink_to(ROOT/'common/.config/common'/name)
+        (self.home/'.zshrc').symlink_to(ROOT/'zsh/.zshrc')
+        omz = self.home/'.oh-my-zsh'; omz.mkdir()
+        (omz/'oh-my-zsh.sh').write_text('compdef() { :; }\nalias h=helm\n')
+        result = self.run_command(['zsh', '-ic', '''compadd() { printf '%s\\n' "$@"; }
+_kube-use
+alias h
+'''])
+        self.assertIn('later\n', result.stdout)
+        self.assertIn('personal\n', result.stdout)
+        self.assertIn('h=helm', result.stdout)
+
     def test_first_link_repeat_and_restore(self):
         self.original()
         self.transaction('link', '--yes')

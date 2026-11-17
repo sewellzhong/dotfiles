@@ -24,6 +24,9 @@ plugins=(
     archive
     extract
     git
+    kubectl
+    helm
+    kubectx
     autojump
     zsh-autosuggestions
     zsh-syntax-highlighting
@@ -46,6 +49,14 @@ fi
 [ -f ~/.config/zsh/setopt.zsh ] && source ~/.config/zsh/setopt.zsh
 [ -f ~/.config/common/.aliases ] && source ~/.config/common/.aliases
 [ -f ~/.config/common/.functions ] && source ~/.config/common/.functions
+
+# Complete environment names from the local kubeconfig directories.
+if (( $+functions[compdef] && $+functions[kube-list] )); then
+    _kube-use() {
+        compadd -- ${(f)"$(kube-list)"}
+    }
+    compdef _kube-use kube-use
+fi
 
 # zshrc.local
 [ -f ~/.config/zsh/.zshrc.local ] && source ~/.config/zsh/.zshrc.local

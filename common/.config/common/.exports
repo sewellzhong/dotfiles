@@ -13,6 +13,9 @@ export LANGUAGE=en_US.UTF-8
 
 # TERM is inherited from the terminal, SSH, or tmux.
 
+# New interactive shells start in the personal Kubernetes environment.
+export KUBECONFIG="$HOME/.kube/config/personal/config"
+
 # Default Editor.
 #export EDITOR="subl"
 
