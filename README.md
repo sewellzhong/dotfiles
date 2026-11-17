@@ -33,6 +33,34 @@ Oh My Zsh，不修改登录 Shell，也不重复执行其官方安装器。
 支持 `--mode`、`--module`；单模块操作仅用于 `backup` 和 `link`。
 `restore` 接受备份目录下的批次名称，不接受任意路径。
 
+### 第三方 APT 源
+
+第三方源由独立脚本管理，**不会**随 `dotfiles.sh` 的 `full` 或 `install` 模式自动启用。
+需要 `python3`、`gpg`、`dpkg`、`sudo` 和 `apt-get`。先检查可用源，再按名称安装：
+
+```sh
+./apt-sources.sh list
+./apt-sources.sh --dry-run install helm docker
+./apt-sources.sh install helm docker
+./apt-sources.sh verify
+./apt-sources.sh verify helm docker
+```
+
+支持的源名：`apm`、`claude-code`、`docker`、`github-cli`、`google-chrome`、
+`helm`、`mysql`、`pritunl`、`spotify`、`syncthing`、`typora`、`zerotier`。
+脚本支持 Debian 13 和 Ubuntu 24.04/26.04；`apm` 仅支持已核验的 Debian 13。
+仅适用于源支持的架构（例如 Chrome、MySQL、Spotify 限 `amd64`）。
+
+公开的仓库签名密钥保存在 `apt/keys/`，安装时核对固定指纹，新机器上的密钥放在
+`/etc/apt/keyrings/`。脚本使用单独的 deb822 源文件和 `Signed-By`，不修改系统
+CA 证书包。已有同源配置及密钥一致时会复用，不覆盖其他工具管理的文件；有冲突时停止。
+安装命令最后运行一次 `apt-get update`，以验证远端元数据与签名。
+`verify` 只检查本地源和公钥；公钥轮换需更新仓库内的文件及指纹。
+
+Debian 主仓库由系统维护，本脚本不修改；配置方法参见
+[Debian SourcesList 官方教程](https://wiki.debian.org/SourcesList)。
+安装 `kubernetes` 软件组前，可先运行 `./apt-sources.sh install helm`。
+
 ### 软件包与运行时
 
 默认安装 `base`，通过 `DOTFILES_APT_GROUPS` 添加其他组：
@@ -257,6 +285,12 @@ apt update/install. Preflight checks the actual Neovim executable or cached apt 
 against 0.10.4 and rejects an older executable shadowing the apt binary. It checks again
 after installation. Dry runs do not refresh apt indexes and report unknown candidates.
 Build tools and optional language runtimes are checked/documented separately.
+Third-party APT repositories are managed separately with `./apt-sources.sh list`,
+`./apt-sources.sh install NAME...`, and `./apt-sources.sh verify [NAME...]`.
+Installation validates bundled public-key fingerprints, preserves equivalent existing sources,
+and runs one `apt-get update`; `--dry-run` makes no changes. Debian 13 and Ubuntu 24.04/26.04
+are supported, with `apm` limited to Debian 13. The distribution's own APT repositories
+remain under system control; see the [Debian SourcesList guide](https://wiki.debian.org/SourcesList).
 Use `:MasonToolsInstall` and `:TSUpdate` explicitly; startup does not download tools.
 Language servers and parser binaries are outside the Git dependency locks.
 

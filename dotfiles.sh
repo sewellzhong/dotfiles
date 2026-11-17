@@ -88,6 +88,7 @@ APT_KUBERNETES_PACKAGES=(
 )
 SCRIPT_CHECKS=(
     dotfiles.sh
+    apt-sources.sh
     bin/.local/bin/update
     bin/.local/bin/update-beauty
     bin/.local/bin/cleaner
