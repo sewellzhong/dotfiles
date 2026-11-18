@@ -378,7 +378,8 @@ install_apt_package_groups() {
         esac
     done
     if "$kubernetes_selected" && ! is_installed_of_apt helm; then
-        helm_candidate=$(LC_ALL=C apt-cache policy helm | awk '/^[[:space:]]*Candidate:/ {print $2; exit}')
+        # Read through EOF so apt-cache can finish writing under pipefail.
+        helm_candidate=$(LC_ALL=C apt-cache policy helm | awk '/^[[:space:]]*Candidate:/ && !found {print $2; found=1}')
         if [ -z "$helm_candidate" ] || [ "$helm_candidate" = "(none)" ]; then
             die "No Helm apt candidate. Configure the Helm apt source and refresh apt indexes before installing the kubernetes group."
         fi

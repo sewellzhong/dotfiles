@@ -123,6 +123,12 @@ printf '%s\\n' "${COMPREPLY[@]}"
 
     def test_kubernetes_apt_group_and_missing_helm_source(self):
         self.env['TEST_REPO'] = str(ROOT)
+        self.stub('apt-cache', """exec awk 'BEGIN {
+    print "helm:"
+    print "  Candidate: 4.3.0-1"
+    print "  Version table:"
+    for (i = 0; i < 65536; i++) print "     4.3.0-1 500"
+}'""")
         script = '''source "$TEST_REPO/dotfiles.sh"
 DOTFILES_APT_GROUPS=kubernetes
 DRY_RUN=true
