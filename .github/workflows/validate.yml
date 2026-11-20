@@ -17,7 +17,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y stow zsh shellcheck python3 git ripgrep nodejs npm unzip
+          sudo apt-get install -y stow zsh shellcheck python3 git gnupg ripgrep nodejs npm unzip
           cd "$RUNNER_TEMP"
           curl --fail --location --retry 3 -o nvim-linux-x86_64.tar.gz https://github.com/neovim/neovim/releases/download/v0.10.4/nvim-linux-x86_64.tar.gz
           echo '95aaa8e89473f5421114f2787c13ae0ec6e11ebbd1a13a1bd6fcf63420f8073f  nvim-linux-x86_64.tar.gz' | sha256sum --check --strict
